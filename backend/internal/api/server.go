@@ -38,6 +38,7 @@ import (
 type Server struct {
 	mu                sync.RWMutex
 	cfg               config.Config
+	onConfigUpdated   func(config.Config)
 	logger            *logging.Logger
 	store             *state.Store
 	health            *health.Service
@@ -52,7 +53,7 @@ type Server struct {
 	sessions          map[string]time.Time
 }
 
-func NewServer(cfg config.Config, logger *logging.Logger, store *state.Store, healthSvc *health.Service, mailClient imapadapter.Client) *Server {
+func NewServer(cfg config.Config, logger *logging.Logger, store *state.Store, healthSvc *health.Service, mailClient imapadapter.Client, onConfigUpdated func(config.Config)) *Server {
 	configPath := filepath.Join(envOrDefault("CONFIG_DIR", "/llama_lab/config"), "config.yaml")
 	logPath := filepath.Join(envOrDefault("LOG_DIR", "/llama_lab/logs"), "app.log")
 	adminPath := filepath.Join(envOrDefault("CONFIG_DIR", "/llama_lab/config"), "admin.env")
@@ -60,7 +61,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, store *state.Store, he
 	llamaAuthPath := envOrDefault("LLAMA_AUTH_FILE", "/llama_lab/config/llama-auth.json")
 	imapConfigPath := envOrDefault("IMAP_CONFIG_FILE", "/llama_lab/private/imap-config.json")
 	imapConfigKeyPath := envOrDefault("IMAP_CONFIG_KEY_FILE", "/llama_lab/private/imap-config.key")
-	return &Server{cfg: cfg, logger: logger, store: store, health: healthSvc, configPath: configPath, logPath: logPath, adminPath: adminPath, tuningPath: tuningPath, llamaAuthPath: llamaAuthPath, imapConfigPath: imapConfigPath, imapConfigKeyPath: imapConfigKeyPath, mail: mailClient, sessions: map[string]time.Time{}}
+	return &Server{cfg: cfg, onConfigUpdated: onConfigUpdated, logger: logger, store: store, health: healthSvc, configPath: configPath, logPath: logPath, adminPath: adminPath, tuningPath: tuningPath, llamaAuthPath: llamaAuthPath, imapConfigPath: imapConfigPath, imapConfigKeyPath: imapConfigKeyPath, mail: mailClient, sessions: map[string]time.Time{}}
 }
 
 func (s *Server) Run() error {
@@ -424,6 +425,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.cfg = next
 		s.mu.Unlock()
+		if s.onConfigUpdated != nil {
+			s.onConfigUpdated(next)
+		}
 		s.logger.Info("config updated via api")
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:

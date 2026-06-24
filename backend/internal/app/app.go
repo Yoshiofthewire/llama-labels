@@ -100,7 +100,7 @@ func runDaemon(cfg config.Config, logger *logging.Logger, store *state.Store, he
 }
 
 func runServer(cfg config.Config, logger *logging.Logger, store *state.Store, healthSvc *health.Service) error {
-	srv := api.NewServer(cfg, logger, store, healthSvc, newMailClient())
+	srv := api.NewServer(cfg, logger, store, healthSvc, newMailClient(), nil)
 	return srv.Run()
 }
 
@@ -111,12 +111,12 @@ func runAll(cfg config.Config, logger *logging.Logger, store *state.Store, healt
 		healthSvc.SetAICreditsExhausted(at)
 	}
 	mailClient := newMailClient()
-	srv := api.NewServer(cfg, logger, store, healthSvc, mailClient)
 	llamaClient := newLlamaClient(cfg)
 	poller, err := processor.New(cfg, logger, store, healthSvc, mailClient, llamaClient)
 	if err != nil {
 		return err
 	}
+	srv := api.NewServer(cfg, logger, store, healthSvc, mailClient, poller.UpdateConfig)
 	warmupLlamaOnStartup(logger, llamaClient, poller)
 
 	stop := make(chan os.Signal, 1)

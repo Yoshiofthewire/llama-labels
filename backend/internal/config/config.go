@@ -15,38 +15,38 @@ type Paths struct {
 }
 
 type Config struct {
-	Timezone string `yaml:"timezone"`
-	LogLevel string `yaml:"logLevel"`
+	Timezone string `yaml:"timezone" json:"timezone"`
+	LogLevel string `yaml:"logLevel" json:"logLevel"`
 
 	Llama struct {
-		BaseURL      string `yaml:"baseUrl"`
-		APIKey       string `yaml:"apiKey"`
-		ClassifyPath string `yaml:"classifyPath"`
-	} `yaml:"llama"`
+		BaseURL      string `yaml:"baseUrl" json:"baseUrl"`
+		APIKey       string `yaml:"apiKey" json:"apiKey"`
+		ClassifyPath string `yaml:"classifyPath" json:"classifyPath"`
+	} `yaml:"llama" json:"llama"`
 
 	Scan struct {
-		IntervalSeconds int `yaml:"intervalSeconds"`
-	} `yaml:"scan"`
+		IntervalSeconds int `yaml:"intervalSeconds" json:"intervalSeconds"`
+	} `yaml:"scan" json:"scan"`
 
 	RateLimits struct {
-		PerMinute int `yaml:"perMinute"`
-		PerHour   int `yaml:"perHour"`
-	} `yaml:"rateLimits"`
+		PerMinute int `yaml:"perMinute" json:"perMinute"`
+		PerHour   int `yaml:"perHour" json:"perHour"`
+	} `yaml:"rateLimits" json:"rateLimits"`
 
 	Redaction struct {
-		Patterns []Pattern `yaml:"patterns"`
-	} `yaml:"redaction"`
+		Patterns []Pattern `yaml:"patterns" json:"patterns"`
+	} `yaml:"redaction" json:"redaction"`
 
 	Labels struct {
-		Allowlist       []string            `yaml:"allowlist"`
-		KeywordMappings map[string][]string `yaml:"keywordMappings"`
-	} `yaml:"labels"`
+		Allowlist       []string            `yaml:"allowlist" json:"allowlist"`
+		KeywordMappings map[string][]string `yaml:"keywordMappings" json:"keywordMappings"`
+	} `yaml:"labels" json:"labels"`
 }
 
 type Pattern struct {
-	Name        string `yaml:"name"`
-	Regex       string `yaml:"regex"`
-	Replacement string `yaml:"replacement"`
+	Name        string `yaml:"name" json:"name"`
+	Regex       string `yaml:"regex" json:"regex"`
+	Replacement string `yaml:"replacement" json:"replacement"`
 }
 
 func Default() Config {

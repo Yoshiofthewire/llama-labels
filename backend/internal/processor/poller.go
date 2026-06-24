@@ -19,6 +19,7 @@ import (
 
 type Poller struct {
 	cfg       config.Config
+	cfgMu     sync.RWMutex
 	log       *logging.Logger
 	store     *state.Store
 	health    *health.Service
@@ -80,6 +81,18 @@ func (p *Poller) TriggerUnreadSweep() {
 		p.log.Error("failed to reset checkpoint for unread sweep", "error", err.Error())
 	}
 	p.tick()
+}
+
+func (p *Poller) UpdateConfig(cfg config.Config) {
+	p.cfgMu.Lock()
+	p.cfg = cfg
+	p.cfgMu.Unlock()
+}
+
+func (p *Poller) currentConfig() config.Config {
+	p.cfgMu.RLock()
+	defer p.cfgMu.RUnlock()
+	return p.cfg
 }
 
 func (p *Poller) tick() {
@@ -193,6 +206,8 @@ func (p *Poller) recentDecisionsContext(limit int) string {
 }
 
 func (p *Poller) handleMessage(ctx context.Context, msg imapadapter.Message) error {
+	cfg := p.currentConfig()
+
 	body := strings.TrimSpace(msg.Body)
 	if len(body) > 2000 {
 		body = body[:2000]
@@ -209,7 +224,7 @@ func (p *Poller) handleMessage(ctx context.Context, msg imapadapter.Message) err
 		}
 	}
 
-	label, err := classifyWithRetry(ctx, p.llama, p.cfg.Labels.Allowlist, msg.Sender, msg.Subject, bodyWithContext)
+	label, err := classifyWithRetry(ctx, p.llama, cfg.Labels.Allowlist, msg.Sender, msg.Subject, bodyWithContext)
 	if err != nil {
 		if isAICreditsExhaustedError(err) {
 			p.flagAICreditsExhausted()
@@ -219,9 +234,9 @@ func (p *Poller) handleMessage(ctx context.Context, msg imapadapter.Message) err
 	// A successful classification means Llama has credits again; clear any flag.
 	p.clearAICreditsExhausted()
 	p.log.Info("classification result", "message_id", msg.ID, "raw_label", strings.TrimSpace(label), "sender", msg.Sender, "subject", msg.Subject)
-	selected := llama.SelectLabelFromText(p.cfg.Labels.Allowlist, label)
+	selected := llama.SelectLabelFromText(cfg.Labels.Allowlist, label)
 	if selected == "" {
-		p.log.Info("classification skipped", "message_id", msg.ID, "reason", "no known label returned", "raw_label", strings.TrimSpace(label), "allowlist_count", intToString(len(p.cfg.Labels.Allowlist)))
+		p.log.Info("classification skipped", "message_id", msg.ID, "reason", "no known label returned", "raw_label", strings.TrimSpace(label), "allowlist_count", intToString(len(cfg.Labels.Allowlist)))
 		_ = p.store.AddDecision(state.Decision{
 			MessageID: msg.ID,
 			Sender:    msg.Sender,
@@ -231,7 +246,7 @@ func (p *Poller) handleMessage(ctx context.Context, msg imapadapter.Message) err
 		})
 		return p.store.MarkProcessed(msg.ID)
 	}
-	keywords := keywordsForSelectedLabel(selected, p.cfg.Labels.KeywordMappings)
+	keywords := keywordsForSelectedLabel(selected, cfg.Labels.KeywordMappings)
 	p.log.Info(
 		"applying label",
 		"message_id", msg.ID,
@@ -400,6 +415,7 @@ func keywordsForSelectedLabel(label string, mappings map[string][]string) []stri
 func (p *Poller) allowByRate() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	cfg := p.currentConfig()
 	now := time.Now()
 	minuteCutoff := now.Add(-1 * time.Minute)
 	hourCutoff := now.Add(-1 * time.Hour)
@@ -416,10 +432,10 @@ func (p *Poller) allowByRate() bool {
 			minuteCount++
 		}
 	}
-	if minuteCount >= p.cfg.RateLimits.PerMinute {
+	if minuteCount >= cfg.RateLimits.PerMinute {
 		return false
 	}
-	if len(p.processed) >= p.cfg.RateLimits.PerHour {
+	if len(p.processed) >= cfg.RateLimits.PerHour {
 		return false
 	}
 	p.processed = append(p.processed, now)
