@@ -26,10 +26,13 @@ function formatTimestamp(value: string): string {
 }
 
 function processEmailHtml(html: string, showImages: boolean): string {
-  if (showImages) return html;
+  // Extract body content if it's a full HTML document
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  const content = bodyMatch ? bodyMatch[1] : html;
   
-  // Replace img tags with [Image Blocked]
-  return html.replace(/<img[^>]*>/gi, "[Image Blocked]");
+  // Replace img tags with [Image Blocked] if not showing images
+  if (showImages) return content;
+  return content.replace(/<img[^>]*>/gi, "[Image Blocked]");
 }
 
 export function ReadPage() {
