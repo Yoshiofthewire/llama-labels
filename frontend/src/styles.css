@@ -414,6 +414,7 @@ pre {
   border: 0;
   border-bottom: 1px solid #d8dde6;
   border-radius: 10px 10px 0 0;
+  background: #f0f5d7;
 }
 
 .compose-editor-html .ql-container.ql-snow {
@@ -433,9 +434,36 @@ pre {
   width: auto;
   border: 0;
   background: transparent;
-  color: inherit;
+  color: #2f3a00;
   padding: 3px 5px;
   border-radius: 0;
+}
+
+.compose-editor-html .ql-toolbar .ql-stroke {
+  stroke: #2f3a00;
+}
+
+.compose-editor-html .ql-toolbar .ql-fill {
+  fill: #2f3a00;
+}
+
+.compose-editor-html .ql-toolbar .ql-picker {
+  color: #2f3a00;
+}
+
+.compose-editor-html .ql-toolbar button.ql-active,
+.compose-editor-html .ql-toolbar .ql-picker-label.ql-active {
+  color: #5f7d00;
+}
+
+.compose-editor-html .ql-toolbar button.ql-active .ql-stroke,
+.compose-editor-html .ql-toolbar .ql-picker-label.ql-active .ql-stroke {
+  stroke: #5f7d00;
+}
+
+.compose-editor-html .ql-toolbar button.ql-active .ql-fill,
+.compose-editor-html .ql-toolbar .ql-picker-label.ql-active .ql-fill {
+  fill: #5f7d00;
 }
 
 @media (max-width: 900px) {

@@ -40,8 +40,6 @@ type InboxFoldersResponse = {
   folders: string[];
 };
 
-type ComposeMode = "text" | "html";
-
 export function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -53,8 +51,6 @@ export function App() {
   const [composeCc, setComposeCc] = useState("");
   const [composeBcc, setComposeBcc] = useState("");
   const [composeSubject, setComposeSubject] = useState("");
-  const [composeMode, setComposeMode] = useState<ComposeMode>("text");
-  const [composeTextBody, setComposeTextBody] = useState("");
   const [composeHtmlBody, setComposeHtmlBody] = useState("");
   const [composeSending, setComposeSending] = useState(false);
   const [composeError, setComposeError] = useState("");
@@ -105,7 +101,7 @@ export function App() {
   }, [archiveOpen, auth?.authenticated]);
 
   useEffect(() => {
-    if (!composeOpen || composeMode !== "html") return;
+    if (!composeOpen) return;
     if (!quillEditorRef.current) return;
 
     if (!quillInstanceRef.current) {
@@ -122,15 +118,13 @@ export function App() {
     if (editor && editor.root.innerHTML !== composeHtmlBody) {
       editor.root.innerHTML = composeHtmlBody;
     }
-  }, [composeOpen, composeMode, composeHtmlBody]);
+  }, [composeOpen, composeHtmlBody]);
 
   function resetComposeForm() {
     setComposeTo("");
     setComposeCc("");
     setComposeBcc("");
     setComposeSubject("");
-    setComposeMode("text");
-    setComposeTextBody("");
     setComposeHtmlBody("");
     setComposeSending(false);
     setComposeError("");
@@ -144,21 +138,6 @@ export function App() {
     setComposeError("");
     setComposeSuccess("");
     setComposeOpen(true);
-  }
-
-  function getComposeBody(mode: ComposeMode): string {
-    if (mode === "html") {
-      return quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody;
-    }
-    return composeTextBody;
-  }
-
-  function switchComposeMode(nextMode: ComposeMode) {
-    if (nextMode === composeMode) return;
-    if (composeMode === "html" && quillInstanceRef.current) {
-      setComposeHtmlBody(quillInstanceRef.current.root.innerHTML);
-    }
-    setComposeMode(nextMode);
   }
 
   function trashComposeDraft() {
@@ -175,7 +154,7 @@ export function App() {
     setComposeSending(true);
     setComposeError("");
     setComposeSuccess("");
-    const body = getComposeBody(composeMode);
+    const body = quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody;
     try {
       await postJSON<{ ok: boolean }>("/api/mail/send", {
         to,
@@ -183,7 +162,7 @@ export function App() {
         bcc: composeBcc.trim(),
         subject: composeSubject,
         body,
-        mode: composeMode
+        mode: "html"
       });
       setComposeSuccess("Email sent.");
       setComposeOpen(false);
@@ -338,43 +317,15 @@ export function App() {
               </label>
             </div>
 
-            <div className="compose-mode-bar">
-              <button
-                type="button"
-                className={`compose-mode-button ${composeMode === "text" ? "active" : ""}`}
-                onClick={() => switchComposeMode("text")}
-              >
-                Plain Text
-              </button>
-              <button
-                type="button"
-                className={`compose-mode-button ${composeMode === "html" ? "active" : ""}`}
-                onClick={() => switchComposeMode("html")}
-              >
-                WYSIWYG HTML
-              </button>
-            </div>
-
-            {composeMode === "text" ? (
-              <textarea
-                className="compose-editor"
-                value={composeTextBody}
-                onChange={(event) => setComposeTextBody(event.target.value)}
-                placeholder="Write your email in plain text"
-              />
-            ) : null}
-
-            {composeMode === "html" ? (
-              <div
-                ref={quillEditorRef}
-                className="compose-editor compose-editor-html"
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                  }
-                }}
-              />
-            ) : null}
+            <div
+              ref={quillEditorRef}
+              className="compose-editor compose-editor-html"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                }
+              }}
+            />
           </section>
         </div>
       ) : null}
