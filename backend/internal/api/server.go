@@ -578,6 +578,11 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		status := strings.TrimSpace(msg.Status)
+		if status == "" {
+			status = "unread"
+		}
+
 		byTab[tab] = append(byTab[tab], inboxEmail{
 			MessageID: msg.MessageID,
 			Sender:    msg.Sender,
@@ -585,7 +590,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 			Subject:   msg.Subject,
 			Body:      msg.Body,
 			Label:     tab,
-			Status:    "unread",
+			Status:    status,
 			AtUTC:     msg.AtUTC,
 		})
 	}

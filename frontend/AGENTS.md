@@ -21,7 +21,7 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 | Page | Endpoints used |
 |------|---------------|
 | `LoginPage.tsx` | `POST /api/auth/login`, `POST /api/auth/password` |
-| `ReadPage.tsx` | `GET /api/inbox?limit=500`, `POST /api/inbox/actions` (bulk inbox actions + read state updates) |
+| `ReadPage.tsx` | `GET /api/inbox?limit=500`, `POST /api/inbox/actions` (bulk inbox actions + read/unread state updates) |
 | `StatusPage.tsx` | `GET /api/status` |
 | `HealthPage.tsx` | `GET /api/health`, `GET /api/status`, `POST /api/health/repair` |
 | `ConfigPage.tsx` | `GET/POST /api/imap/config`, `POST /api/imap/test`, `GET|POST /api/llama/auth` |

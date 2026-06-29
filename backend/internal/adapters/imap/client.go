@@ -36,6 +36,7 @@ type UnreadMessage struct {
 	Keywords  []string
 	AtUTC     string
 	Body      string
+	Status    string
 }
 
 var htmlTagPattern = regexp.MustCompile(`(?s)<[^>]*>`)
@@ -336,18 +337,15 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, limit int) ([]Unread
 		return nil, err
 	}
 
-	uids, err := d.GetUIDs("UNSEEN")
+	uids, err := d.GetLastNUIDs(limit)
 	if err != nil {
-		return nil, fmt.Errorf("imap search unseen: %w", err)
+		return nil, fmt.Errorf("imap list recent messages: %w", err)
 	}
 	if len(uids) == 0 {
 		return []UnreadMessage{}, nil
 	}
 
 	sort.Ints(uids)
-	if len(uids) > limit {
-		uids = uids[len(uids)-limit:]
-	}
 
 	emails, err := d.GetEmails(uids...)
 	if err != nil {
@@ -371,11 +369,19 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, limit int) ([]Unread
 		}
 
 		keywords := []string{}
+		status := "unread"
 		if ov := overviews[uid]; ov != nil {
 			seen := map[string]bool{}
 			for _, flag := range ov.Flags {
 				clean := strings.TrimSpace(flag)
-				if clean == "" || strings.HasPrefix(clean, "\\") {
+				if clean == "" {
+					continue
+				}
+				if strings.EqualFold(clean, "\\Seen") {
+					status = "read"
+					continue
+				}
+				if strings.HasPrefix(clean, "\\") {
 					continue
 				}
 				key := strings.ToLower(clean)
@@ -411,6 +417,7 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, limit int) ([]Unread
 			Keywords:  keywords,
 			AtUTC:     atUTC,
 			Body:      body,
+			Status:    status,
 		})
 	}
 

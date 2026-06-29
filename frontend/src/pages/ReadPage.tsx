@@ -134,7 +134,24 @@ export function ReadPage() {
         const first = response.failed[0];
         throw new Error(first?.error || "some messages could not be updated");
       }
-      removeMessageIDs(messageIds);
+      if (action === "read") {
+        const updated = new Set(messageIds);
+        setByTab((current) => {
+          const next: Record<string, InboxEmail[]> = {};
+          Object.entries(current).forEach(([tab, items]) => {
+            next[tab] = items.map((item) =>
+              updated.has(item.messageId) ? { ...item, status: "read" } : item
+            );
+          });
+          return next;
+        });
+        setSelected((current) => {
+          if (!current || !updated.has(current.messageId)) return current;
+          return { ...current, status: "read" };
+        });
+      } else {
+        removeMessageIDs(messageIds);
+      }
       if (options?.closeModal) {
         setSelected(null);
       }
@@ -151,7 +168,9 @@ export function ReadPage() {
     setShowImages(false);
     setShowRawEmail(false);
     setActionError("");
-    await applyInboxAction("read", [item.messageId]);
+    if (item.status !== "read") {
+      await applyInboxAction("read", [item.messageId]);
+    }
   }
 
   function printEmails(items: InboxEmail[]) {
@@ -258,7 +277,7 @@ export function ReadPage() {
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14, marginBottom: 14 }}>
         {tabs.map((tab) => {
-          const unreadCount = (byTab[tab] ?? []).length;
+          const unreadCount = (byTab[tab] ?? []).filter((item) => item.status !== "read").length;
           const isActive = activeTab === tab;
           return (
             <button
@@ -335,7 +354,9 @@ export function ReadPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((item) => (
+              {rows.map((item) => {
+                const isRead = item.status === "read";
+                return (
                 <tr key={`${item.messageId}-${item.atUtc}`}>
                   <td style={{ borderBottom: "1px solid var(--line)", padding: "8px" }}>
                     <input
@@ -359,19 +380,21 @@ export function ReadPage() {
                         padding: 0,
                         border: 0,
                         background: "transparent",
-                        color: "var(--ink-strong)",
+                        color: isRead ? "var(--ink)" : "var(--ink-strong)",
                         textAlign: "left",
                         cursor: "pointer",
-                        textDecoration: "underline"
+                        textDecoration: "underline",
+                        fontWeight: isRead ? 400 : 600,
+                        opacity: isRead ? 0.7 : 1
                       }}
                     >
                       {item.subject || "(no subject)"}
                     </button>
                   </td>
-                  <td style={{ borderBottom: "1px solid var(--line)", padding: "8px" }}>{item.sender || "-"}</td>
-                  <td style={{ borderBottom: "1px solid var(--line)", padding: "8px" }}>{formatTimestamp(item.atUtc)}</td>
+                  <td style={{ borderBottom: "1px solid var(--line)", padding: "8px", opacity: isRead ? 0.7 : 1 }}>{item.sender || "-"}</td>
+                  <td style={{ borderBottom: "1px solid var(--line)", padding: "8px", opacity: isRead ? 0.7 : 1 }}>{formatTimestamp(item.atUtc)}</td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>
