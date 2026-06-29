@@ -187,7 +187,7 @@ export function ReadPage() {
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: "min(680px, 100%)",
+              width: "80%",
               background: "var(--panel)",
               border: "1px solid var(--line)",
               borderRadius: 14,
@@ -209,8 +209,7 @@ export function ReadPage() {
               <p style={{ margin: 0 }}><strong>Time:</strong> {formatTimestamp(selected.atUtc)}</p>
               {selected.detail ? <p style={{ margin: 0 }}><strong>Detail:</strong> {selected.detail}</p> : null}
               <div>
-                <p style={{ margin: "6px 0" }}><strong>Email Body:</strong></p>
-                <pre
+                <div
                   style={{
                     margin: 0,
                     maxHeight: "40vh",
@@ -219,13 +218,12 @@ export function ReadPage() {
                     borderRadius: 8,
                     padding: "10px 12px",
                     background: "var(--bg)",
-                    color: "var(--ink-strong)",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word"
+                    color: "var(--ink-strong)"
                   }}
-                >
-                  {selected.body && selected.body.trim() !== "" ? selected.body : "No message body available."}
-                </pre>
+                  dangerouslySetInnerHTML={{
+                    __html: selected.body && selected.body.trim() !== "" ? selected.body : "No message body available."
+                  }}
+                />
                 <p style={{ margin: "6px 0 0", fontSize: "0.75rem", opacity: 0.7 }}>
                   Remote images are not loaded by default.
                 </p>

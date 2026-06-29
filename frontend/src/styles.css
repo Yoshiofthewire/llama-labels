@@ -1,11 +1,11 @@
 :root {
-  --bg: #ffffff;
-  --panel: #ffffff;
-  --ink: #8076a3;
-  --ink-strong: #7c677f;
+  --bg: #1a1a1e;
+  --panel: #252530;
+  --ink: #d4c5e2;
+  --ink-strong: #e8ddf5;
   --accent: #9bc400;
-  --accent-soft: #f9c5bd;
-  --line: #d9d2e5;
+  --accent-soft: #6b4a42;
+  --line: #404050;
   --mono: "IBM Plex Mono", monospace;
   --sans: "Space Grotesk", sans-serif;
 }
@@ -18,7 +18,7 @@ body {
   margin: 0;
   font-family: var(--sans);
   color: var(--ink);
-  background: radial-gradient(circle at top right, rgba(249, 197, 189, 0.45), transparent 45%), var(--bg);
+  background: radial-gradient(circle at top right, rgba(107, 74, 66, 0.25), transparent 45%), var(--bg);
 }
 
 .shell {
@@ -30,7 +30,7 @@ body {
 .sidebar {
   border-right: 1px solid var(--line);
   padding: 20px;
-  background: linear-gradient(180deg, #ffffff, #fdf9ff);
+  background: linear-gradient(180deg, #1f1f24, #2a2530);
   display: flex;
   flex-direction: column;
 }
@@ -72,7 +72,7 @@ body {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(249, 197, 189, 0.28);
+  background: rgba(107, 74, 66, 0.2);
 }
 
 .session-meta p {
@@ -125,7 +125,7 @@ body {
   border-radius: 14px;
   padding: 18px;
   margin-bottom: 18px;
-  box-shadow: 0 10px 30px rgba(128, 118, 163, 0.14);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
 }
 
 h1, h2, h3, h4 {
@@ -181,22 +181,22 @@ pre {
 }
 
 .notice-success {
-  background: rgba(155, 196, 0, 0.2);
+  background: rgba(155, 196, 0, 0.15);
 }
 
 .notice-warning {
-  background: rgba(249, 197, 189, 0.34);
+  background: rgba(107, 74, 66, 0.25);
 }
 
 .notice-error {
-  background: rgba(124, 103, 127, 0.2);
+  background: rgba(232, 221, 245, 0.15);
 }
 
 .log-line { color: var(--ink); }
-.log-error { color: var(--ink-strong); }
-.log-warn  { color: #9b7f83; }
-.log-info  { color: var(--accent); opacity: 0.9; }
-.log-debug { color: #a597b8; }
+.log-error { color: #ff8a80; }
+.log-warn  { color: #ffb74d; }
+.log-info  { color: #9bc400; opacity: 0.95; }
+.log-debug { color: #ce93d8; }
 
 .health-head {
   display: flex;
