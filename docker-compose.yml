@@ -4,7 +4,7 @@ services:
     container_name: llama-lab
     ports:
       - "5866:5866"
-      - "11434:11434"  #Uncomment to expose Ollama API
+    #  - "11434:11434"  #Uncomment to expose Ollama API
     environment:
       WEB_PORT: 5866
       TZ: ${TZ:-America/New_York}
