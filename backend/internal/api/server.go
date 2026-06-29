@@ -77,6 +77,7 @@ func (s *Server) Run() error {
 	mux.HandleFunc("/api/labels", s.withAuth(s.handleLabels))
 	mux.HandleFunc("/api/decisions", s.withAuth(s.handleDecisions))
 	mux.HandleFunc("/api/inbox", s.withAuth(s.handleInbox))
+	mux.HandleFunc("/api/inbox/actions", s.withAuth(s.handleInboxActions))
 	mux.HandleFunc("/api/logs", s.withAuth(s.handleLogs))
 	mux.HandleFunc("/api/logs/list", s.withAuth(s.handleLogsList))
 	mux.HandleFunc("/api/llama/auth", s.withAuth(s.handleLlamaAuth))
@@ -590,6 +591,73 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 
 	tabs = append(tabs, uncategorizedTab)
 	writeJSON(w, http.StatusOK, map[string]any{"tabs": tabs, "byTab": byTab})
+}
+
+func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.mail == nil {
+		http.Error(w, "imap client is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		Action     string   `json:"action"`
+		MessageIDs []string `json:"messageIds"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	switch action {
+	case "delete", "archive", "spam", "read":
+	default:
+		http.Error(w, "unsupported action", http.StatusBadRequest)
+		return
+	}
+
+	uniqueIDs := make([]string, 0, len(req.MessageIDs))
+	seen := map[string]bool{}
+	for _, messageID := range req.MessageIDs {
+		clean := strings.TrimSpace(messageID)
+		if clean == "" {
+			continue
+		}
+		if seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		uniqueIDs = append(uniqueIDs, clean)
+	}
+	if len(uniqueIDs) == 0 {
+		http.Error(w, "at least one messageId is required", http.StatusBadRequest)
+		return
+	}
+
+	type inboxActionFailure struct {
+		MessageID string `json:"messageId"`
+		Error     string `json:"error"`
+	}
+	failures := make([]inboxActionFailure, 0)
+	processed := 0
+	for _, messageID := range uniqueIDs {
+		if err := s.mail.ApplyInboxAction(r.Context(), messageID, action); err != nil {
+			failures = append(failures, inboxActionFailure{MessageID: messageID, Error: err.Error()})
+			continue
+		}
+		processed++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":        len(failures) == 0,
+		"action":    action,
+		"processed": processed,
+		"failed":    failures,
+	})
 }
 
 func (s *Server) handleLabels(w http.ResponseWriter, r *http.Request) {

@@ -62,6 +62,7 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 | `GET /api/labels` | yes | Allowed label list |
 | `GET /api/decisions?limit=N` | yes | Audit trail |
 | `GET /api/inbox?limit=N` | yes | Live unread IMAP inbox grouped by allowed keywords + Uncategorized |
+| `POST /api/inbox/actions` | yes | Bulk inbox actions: `delete`, `archive`, `spam`, `read` by `messageIds[]` |
 | `GET /api/logs?file=<name>.log&lines=<n>` | yes | Log tail |
 | `GET /api/logs/list` | yes | Log file inventory |
 | `GET\|POST /api/llama/auth` | yes | Ollama auth token management |

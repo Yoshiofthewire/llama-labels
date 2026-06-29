@@ -65,6 +65,7 @@ type Client interface {
 	ListLabels(ctx context.Context) ([]string, error)
 	EnsureLabel(ctx context.Context, label string) error
 	ApplyLabel(ctx context.Context, messageID, label string) error
+	ApplyInboxAction(ctx context.Context, messageID, action string) error
 }
 
 type StubClient struct{}
@@ -86,6 +87,10 @@ func (s *StubClient) EnsureLabel(_ context.Context, _ string) error {
 }
 
 func (s *StubClient) ApplyLabel(_ context.Context, _ string, _ string) error {
+	return nil
+}
+
+func (s *StubClient) ApplyInboxAction(_ context.Context, _ string, _ string) error {
 	return nil
 }
 
@@ -487,6 +492,57 @@ func (c *APIClient) ApplyLabel(ctx context.Context, messageID, label string) err
 		return fmt.Errorf("imap set keyword %q on uid %d: %w", label, uid, err)
 	}
 	return nil
+}
+
+func (c *APIClient) ApplyInboxAction(ctx context.Context, messageID, action string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	uid, err := strconv.Atoi(strings.TrimSpace(messageID))
+	if err != nil || uid <= 0 {
+		return fmt.Errorf("invalid message id %q", messageID)
+	}
+	action = strings.ToLower(strings.TrimSpace(action))
+
+	d, err := c.ensureConnectedLocked()
+	if err != nil {
+		return err
+	}
+
+	moveToFolder := func(folder string) error {
+		if err := d.MoveEmail(uid, folder); err == nil {
+			return nil
+		}
+		if err := d.CreateFolder(folder); err != nil {
+			return err
+		}
+		return d.MoveEmail(uid, folder)
+	}
+
+	switch action {
+	case "read":
+		if err := d.MarkSeen(uid); err != nil {
+			return fmt.Errorf("imap mark seen uid %d: %w", uid, err)
+		}
+		return nil
+	case "archive":
+		if err := moveToFolder("Archive"); err != nil {
+			return fmt.Errorf("imap move uid %d to Archive: %w", uid, err)
+		}
+		return nil
+	case "spam":
+		if err := moveToFolder("Spam"); err != nil {
+			return fmt.Errorf("imap move uid %d to Spam: %w", uid, err)
+		}
+		return nil
+	case "delete":
+		if err := d.DeleteEmail(uid); err != nil {
+			return fmt.Errorf("imap delete uid %d: %w", uid, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported inbox action %q", action)
+	}
 }
 
 func (c *APIClient) ensureConnectedLocked() (*goimap.Dialer, error) {
