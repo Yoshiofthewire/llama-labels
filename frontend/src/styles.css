@@ -292,6 +292,27 @@ body {
   color: var(--accent-contrast);
 }
 
+.inbox-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inbox-action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.inbox-action-icon {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.inbox-action-text {
+  line-height: 1;
+}
+
 .inbox-table-wrap {
   overflow: hidden;
   border: 1px solid var(--line);
@@ -394,6 +415,69 @@ body {
 
 .inbox-time-cell {
   white-space: nowrap;
+}
+
+.inbox-row-meta {
+  display: none;
+}
+
+.email-reader-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--modal-overlay);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 2000;
+}
+
+.email-reader-window {
+  width: min(1100px, 92vw);
+  max-height: 92vh;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 14px 40px var(--modal-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.email-reader-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.email-reader-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.email-reader-content {
+  margin-top: 2px;
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.email-reader-body-block {
+  margin: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg);
+  color: var(--ink-strong);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
 }
 
 h1, h2, h3, h4 {
@@ -786,19 +870,6 @@ pre {
     grid-template-columns: 1fr;
   }
 
-  .read-page-panel {
-    height: auto;
-    overflow: visible;
-  }
-
-  .inbox-list-region {
-    min-height: 320px;
-  }
-
-  .inbox-table-wrap {
-    flex: none;
-  }
-
   .sidebar {
     border-right: 0;
     border-bottom: 1px solid var(--line);
@@ -817,5 +888,144 @@ pre {
 
   .compose-field-row {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) and (max-aspect-ratio: 10/9) {
+  .content {
+    padding: 10px;
+  }
+
+  .panel {
+    padding: 10px;
+    margin-bottom: 10px;
+  }
+
+  .sidebar {
+    padding: 8px 10px;
+    max-height: 34vh;
+    overflow: auto;
+  }
+
+  .sidebar-logo,
+  .sidebar-llama-logo,
+  .sidebar-footer {
+    display: none;
+  }
+
+  .new-email-button {
+    margin-bottom: 8px;
+    padding: 8px;
+    font-size: 0.82rem;
+  }
+
+  .sidebar nav,
+  .sidebar .nav-group {
+    gap: 6px;
+  }
+
+  .sidebar a,
+  .sidebar .nav-heading,
+  .sidebar .nav-link-button {
+    padding: 7px 8px;
+    font-size: 0.78rem;
+    border-radius: 8px;
+  }
+
+  .inbox-expand-button,
+  .sidebar-folder-menu-button {
+    min-width: 34px;
+    padding: 6px;
+    font-size: 0.9rem;
+  }
+
+  .read-page-panel {
+    height: calc(100vh - 46px);
+    overflow: hidden;
+  }
+
+  .inbox-action-bar {
+    gap: 6px;
+  }
+
+  .inbox-action-button {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    padding: 0;
+    border-radius: 9px;
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .inbox-action-icon {
+    font-size: 0.95rem;
+  }
+
+  .inbox-action-text {
+    display: none;
+  }
+
+  .inbox-desktop-col {
+    display: none;
+  }
+
+  .inbox-cell {
+    padding: 8px;
+  }
+
+  .inbox-row-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 4px;
+    gap: 10px;
+    font-size: 0.74rem;
+    opacity: 0.82;
+  }
+
+  .inbox-page-tab {
+    padding: 4px 8px;
+    font-size: 0.72rem;
+  }
+
+  .email-reader-backdrop {
+    padding: 0;
+  }
+
+  .email-reader-window {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: 0;
+    padding: 10px;
+    box-shadow: none;
+  }
+
+  .email-reader-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .email-reader-actions {
+    width: 100%;
+    gap: 6px;
+  }
+
+  .email-reader-actions button {
+    padding: 6px 8px;
+    font-size: 0.78rem;
+  }
+
+  .email-reader-content {
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .email-reader-body-block {
+    max-height: none;
+    height: 100%;
   }
 }

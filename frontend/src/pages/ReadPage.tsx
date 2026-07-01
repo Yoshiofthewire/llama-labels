@@ -133,6 +133,44 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
   const isDraftMailbox = mailbox.toLowerCase().includes("drafts");
   const sourceMailbox = mailbox || "INBOX";
 
+  const batchActions = [
+    {
+      key: "delete",
+      label: "Delete",
+      icon: "🗑",
+      onClick: () => applyInboxAction("delete", selectedMessageIds),
+      disabled: selectedMessageIds.length === 0 || actionLoading
+    },
+    {
+      key: "archive",
+      label: "Archive",
+      icon: "📥",
+      onClick: () => applyInboxAction("archive", selectedMessageIds),
+      disabled: selectedMessageIds.length === 0 || actionLoading
+    },
+    {
+      key: "spam",
+      label: "Spam",
+      icon: "⚠",
+      onClick: () => applyInboxAction("spam", selectedMessageIds),
+      disabled: selectedMessageIds.length === 0 || actionLoading
+    },
+    {
+      key: "read",
+      label: "Read",
+      icon: "✓",
+      onClick: () => applyInboxAction("read", selectedMessageIds),
+      disabled: selectedMessageIds.length === 0 || actionLoading
+    },
+    {
+      key: "print",
+      label: "Print",
+      icon: "🖨",
+      onClick: () => printEmails(selectedInTab),
+      disabled: selectedInTab.length === 0 || actionLoading
+    }
+  ] as const;
+
   async function loadInbox() {
     setLoading(true);
     setError("");
@@ -397,42 +435,21 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
         <div>
           <h2 style={{ marginTop: 0, marginBottom: 6 }}>{mailbox ? mailbox : "Inbox"}</h2>
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          <button
-            type="button"
-            onClick={() => applyInboxAction("delete", selectedMessageIds)}
-            disabled={selectedMessageIds.length === 0 || actionLoading}
-          >
-            Delete
-          </button>
-          <button
-            type="button"
-            onClick={() => applyInboxAction("archive", selectedMessageIds)}
-            disabled={selectedMessageIds.length === 0 || actionLoading}
-          >
-            Archive
-          </button>
-          <button
-            type="button"
-            onClick={() => applyInboxAction("spam", selectedMessageIds)}
-            disabled={selectedMessageIds.length === 0 || actionLoading}
-          >
-            Mark as Spam
-          </button>
-          <button
-            type="button"
-            onClick={() => applyInboxAction("read", selectedMessageIds)}
-            disabled={selectedMessageIds.length === 0 || actionLoading}
-          >
-            Mark as Read
-          </button>
-          <button
-            type="button"
-            onClick={() => printEmails(selectedInTab)}
-            disabled={selectedInTab.length === 0 || actionLoading}
-          >
-            Print
-          </button>
+        <div className="inbox-action-bar">
+          {batchActions.map((action) => (
+            <button
+              key={action.key}
+              type="button"
+              onClick={action.onClick}
+              disabled={action.disabled}
+              className="inbox-action-button"
+              aria-label={action.label}
+              title={action.label}
+            >
+              <span className="inbox-action-icon" aria-hidden="true">{action.icon}</span>
+              <span className="inbox-action-text">{action.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -538,12 +555,12 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
                         {sortLabel("subject", "Subject")}
                       </button>
                     </th>
-                    <th className="inbox-col-heading">
+                    <th className="inbox-col-heading inbox-desktop-col">
                       <button type="button" onClick={() => updateSort("sender")} className="inbox-sort-button">
                         {sortLabel("sender", "Sender")}
                       </button>
                     </th>
-                    <th className="inbox-col-heading inbox-col-time">
+                    <th className="inbox-col-heading inbox-col-time inbox-desktop-col">
                       <button type="button" onClick={() => updateSort("time")} className="inbox-sort-button">
                         {sortLabel("time", "Time")}
                       </button>
@@ -553,6 +570,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
                 <tbody>
                   {pageRows.map((item) => {
                     const isRead = item.status === "read";
+                    const displayTime = formatInboxListTime(item.atUtc);
                     return (
                     <tr
                       key={`${item.messageId}-${item.atUtc}`}
@@ -586,9 +604,13 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
                         >
                           {item.subject || "(no subject)"}
                         </button>
+                        <div className="inbox-row-meta">
+                          <span>{item.sender || "-"}</span>
+                          <span>{displayTime}</span>
+                        </div>
                       </td>
-                      <td className="inbox-cell inbox-sender-cell">{item.sender || "-"}</td>
-                      <td className="inbox-cell inbox-time-cell">{formatInboxListTime(item.atUtc)}</td>
+                      <td className="inbox-cell inbox-sender-cell inbox-desktop-col">{item.sender || "-"}</td>
+                      <td className="inbox-cell inbox-time-cell inbox-desktop-col">{displayTime}</td>
                     </tr>
                   )})}
                 </tbody>
@@ -613,33 +635,18 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
 
       {selected ? (
         <div
+          className="email-reader-backdrop"
           role="dialog"
           aria-modal="true"
           onClick={() => setSelected(null)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "var(--modal-overlay)",
-            display: "grid",
-            placeItems: "center",
-            padding: 16,
-            zIndex: 2000
-          }}
         >
           <div
+            className="email-reader-window"
             onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "80%",
-              background: "var(--panel)",
-              border: "1px solid var(--line)",
-              borderRadius: 14,
-              padding: 16,
-              boxShadow: "0 14px 40px var(--modal-shadow)"
-            }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+            <div className="email-reader-head">
               <h3 style={{ margin: 0 }}>Email Details</h3>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <div className="email-reader-actions">
                 <button
                   type="button"
                   onClick={() => applyInboxAction("delete", [selected.messageId], { closeModal: true })}
@@ -674,7 +681,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
               </div>
             </div>
 
-            <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+            <div className="email-reader-content">
               <p style={{ margin: 0 }}><strong>Subject:</strong> {selected.subject || "(no subject)"}</p>
               <p style={{ margin: 0 }}><strong>Sender:</strong> {selected.sender || "-"}</p>
               <p style={{ margin: 0 }}><strong>Sent To:</strong> {selected.sentTo || "-"}</p>
@@ -686,19 +693,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
                 {showRawEmail ? (
                   <pre
                     key="raw"
-                    style={{
-                      margin: 0,
-                      maxHeight: "60vh",
-                      overflowY: "auto",
-                      border: "1px solid var(--line)",
-                      borderRadius: 8,
-                      padding: "10px 12px",
-                      background: "var(--bg)",
-                      color: "var(--ink-strong)",
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
-                      fontFamily: "var(--mono)"
-                    }}
+                    className="email-reader-body-block"
                   >
                     {selected.body || "No message body available."}
                   </pre>
@@ -711,17 +706,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
                     return (
                       <div
                         key="html"
-                        style={{
-                          margin: 0,
-                          maxHeight: "60vh",
-                          overflowY: "auto",
-                          border: "1px solid var(--line)",
-                          borderRadius: 8,
-                          padding: "10px 12px",
-                          background: "var(--bg)",
-                          color: "var(--ink-strong)",
-                          wordBreak: "break-word"
-                        }}
+                        className="email-reader-body-block"
                         dangerouslySetInnerHTML={{ __html: processEmailHtml(body, showImages) }}
                       />
                     );
@@ -729,19 +714,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
                     return (
                       <pre
                         key="text"
-                        style={{
-                          margin: 0,
-                          maxHeight: "60vh",
-                          overflowY: "auto",
-                          border: "1px solid var(--line)",
-                          borderRadius: 8,
-                          padding: "10px 12px",
-                          background: "var(--bg)",
-                          color: "var(--ink-strong)",
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-word",
-                          fontFamily: "var(--mono)"
-                        }}
+                        className="email-reader-body-block"
                       >
                         {body}
                       </pre>
