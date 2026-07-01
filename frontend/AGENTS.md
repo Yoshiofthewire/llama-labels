@@ -62,6 +62,7 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 - Inbox sidebar folder creation uses `POST /api/inbox/folders` with `parent=INBOX`; folder names are single-level only so the server can choose the correct IMAP hierarchy delimiter
 - Custom folder controls are behind a three-dot menu with Rename and Delete; built-in IMAP folders must not render this menu
 - Dragging an email row from ReadPage and dropping onto a sidebar folder (including Inbox and Archive buckets) sends `POST /api/inbox/actions` with `action=move` and refreshes mailbox views via a `mailbox-move-complete` window event
+- ReadPage no longer shows a manual refresh button; it shows a centered clickable "Updated Just Now" label for recent loads and switches to a localized time once the last inbox refresh is older than 3 minutes
 
 ## Verification
 

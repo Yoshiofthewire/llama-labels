@@ -44,6 +44,18 @@ function formatTimestamp(value: string): string {
   return date.toLocaleString();
 }
 
+function formatUpdatedLabel(lastLoadedAt: Date | null, now: number): string {
+  if (!lastLoadedAt) return "Updated Never";
+  const elapsedMs = now - lastLoadedAt.getTime();
+  if (elapsedMs < 3 * 60 * 1000) {
+    return "Updated Just Now";
+  }
+  return `Updated ${lastLoadedAt.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit"
+  })}`;
+}
+
 function processEmailHtml(html: string, showImages: boolean): string {
   // Extract body content if it's a full HTML document
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
@@ -71,6 +83,8 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
   const [actionError, setActionError] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("time");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
+  const [clockTick, setClockTick] = useState(0);
   const isDraftMailbox = mailbox.toLowerCase().includes("drafts");
   const sourceMailbox = mailbox || "INBOX";
 
@@ -80,6 +94,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
     try {
       const mailboxQuery = mailbox ? `&mailbox=${encodeURIComponent(mailbox)}` : "";
       const data = await getJSON<InboxResponse>(`/api/inbox?limit=500${mailboxQuery}`);
+      setLastLoadedAt(new Date());
       const nextTabs = data.tabs ?? [];
       const nextByTab = data.byTab ?? {};
       setTabs(nextTabs);
@@ -115,6 +130,13 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
     const timer = setInterval(loadInbox, 15_000);
     return () => clearInterval(timer);
   }, [mailbox]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setClockTick((current) => current + 1);
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -166,6 +188,10 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
   );
 
   const allRowsSelected = sortedRows.length > 0 && selectedInTab.length === sortedRows.length;
+  const updatedLabel = useMemo(
+    () => formatUpdatedLabel(lastLoadedAt, Date.now()),
+    [clockTick, lastLoadedAt]
+  );
 
   function updateSort(nextKey: SortKey) {
     if (sortKey === nextKey) {
@@ -346,9 +372,6 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
           >
             Print
           </button>
-          <button type="button" onClick={loadInbox} disabled={loading || actionLoading}>
-            {loading ? "Loading..." : "Refresh"}
-          </button>
         </div>
       </div>
 
@@ -402,6 +425,28 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
           })}
         </div>
       ) : null}
+
+      <div style={{ display: "flex", justifyContent: "center", marginTop: 14, paddingTop: 10 }}>
+        <button
+          type="button"
+          onClick={loadInbox}
+          disabled={loading || actionLoading}
+          style={{
+            border: 0,
+            background: "transparent",
+            color: "var(--ink-strong)",
+            font: "inherit",
+            fontSize: "0.85rem",
+            opacity: 0.75,
+            padding: 0,
+            cursor: loading || actionLoading ? "default" : "pointer"
+          }}
+          aria-label="Refresh inbox"
+          title="Refresh inbox"
+        >
+          {updatedLabel}
+        </button>
+      </div>
 
       {sortedRows.length === 0 ? (
         <p style={{ opacity: 0.75 }}>{isInboxMailbox ? "No emails in this tab yet." : "No emails yet."}</p>
