@@ -10,12 +10,10 @@ import { LoginPage } from "./pages/LoginPage";
 import { LogsPage } from "./pages/LogsPage";
 import { LabelsPage } from "./pages/LabelsPage";
 import { ReadPage } from "./pages/ReadPage";
-import { StatusPage } from "./pages/StatusPage";
 import { TuningPage } from "./pages/TuningPage";
 
 const settingsNavItems = [
   ["/login", "Login"],
-  ["/status", "Status"],
   ["/health", "Health"],
   ["/config", "Config"],
   ["/tuning", "Tuning"],
@@ -338,7 +336,7 @@ export function App() {
           {settingsOpen ? (
             <div className="nav-group">
               {settingsNavItems.map(([to, label]) => (
-                <Link key={to} to={to}>
+                <Link key={to} to={to === "/login" && auth.authenticated ? "/password" : to}>
                   {to === "/login" && auth.authenticated ? "Change Password" : label}
                 </Link>
               ))}
@@ -358,8 +356,8 @@ export function App() {
         <Routes>
             <Route path="/" element={<Navigate to={auth.authenticated ? "/read" : "/login"} replace />} />
           <Route path="/login" element={<LoginPage auth={auth} onAuthChanged={refreshAuth} />} />
+          <Route path="/password" element={protect(<LoginPage auth={auth} onAuthChanged={refreshAuth} mode="password" />)} />
               <Route path="/read" element={protect(<ReadPage onOpenDraft={openDraftInCompose} />)} />
-          <Route path="/status" element={protect(<StatusPage />)} />
           <Route path="/health" element={protect(<HealthPage />)} />
           <Route path="/config" element={protect(<ConfigPage />)} />
           <Route path="/tuning" element={protect(<TuningPage />)} />

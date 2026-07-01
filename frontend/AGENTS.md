@@ -21,11 +21,10 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 
 | Page | Endpoints used |
 |------|---------------|
-| `LoginPage.tsx` | `POST /api/auth/login`, `POST /api/auth/password` |
+| `LoginPage.tsx` | `POST /api/auth/login`, `POST /api/auth/password` (`/login` sign-in plus protected `/password` change-password mode) |
 | `ReadPage.tsx` | `GET /api/inbox?limit=500&mailbox=<name>`, `POST /api/inbox/actions` (bulk inbox actions + read/unread state updates, includes current mailbox context) |
-| `StatusPage.tsx` | `GET /api/status` |
-| `HealthPage.tsx` | `GET /api/health`, `GET /api/status`, `POST /api/health/repair` |
-| `ConfigPage.tsx` | `GET/POST /api/imap/config`, `POST /api/imap/test`, `GET|POST /api/llama/auth` |
+| `HealthPage.tsx` | `GET /api/health`, `GET /api/status` (includes `emailsProcessedLastHour`), `POST /api/health/repair` |
+| `ConfigPage.tsx` | `GET/POST /api/imap/config` (also carries SMTP host/port for sending), `POST /api/imap/test`, `GET|POST /api/llama/auth` |
 | `TuningPage.tsx` | `GET/PUT /api/tuning` |
 | `LabelsPage.tsx` | `GET /api/labels` |
 | `DecisionsPage.tsx` | `GET /api/decisions?limit=10` |
@@ -41,7 +40,7 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 
 1. App mounts → `App.useEffect` calls `GET /api/auth/me`
 2. 401 → redirect to `LoginPage`
-3. Successful login → session cookie set → redirect to `StatusPage`
+3. Successful login → session cookie set → redirect to `HealthPage`
 4. First login with temporary password → `mustChangePassword` flag → redirect to password-change form
 
 ## Work Guidance

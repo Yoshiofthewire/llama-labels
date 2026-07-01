@@ -23,6 +23,8 @@ type IMAPConfigStatus = {
   port?: number;
   username?: string;
   mailbox?: string;
+  smtpHost?: string;
+  smtpPort?: number;
   updatedAt?: string;
   encryptedAtRest?: boolean;
 };
@@ -33,6 +35,8 @@ type IMAPForm = {
   username: string;
   password: string;
   mailbox: string;
+  smtpHost: string;
+  smtpPort: number;
 };
 
 function normalizeKeywordMappings(input: unknown): Record<string, string[]> {
@@ -137,7 +141,9 @@ export function ConfigPage() {
     port: 993,
     username: "",
     password: "",
-    mailbox: "INBOX"
+    mailbox: "INBOX",
+    smtpHost: "",
+    smtpPort: 587
   });
   const [imapMessage, setImapMessage] = useState("");
   const [imapBusy, setImapBusy] = useState(false);
@@ -164,7 +170,9 @@ export function ConfigPage() {
         port: status.port ?? prev.port,
         username: status.username ?? prev.username,
         password: "",
-        mailbox: status.mailbox ?? prev.mailbox
+        mailbox: status.mailbox ?? prev.mailbox,
+        smtpHost: status.smtpHost ?? prev.smtpHost,
+        smtpPort: status.smtpPort ?? prev.smtpPort
       }));
     }
   }
@@ -280,7 +288,7 @@ export function ConfigPage() {
     try {
       await deleteJSON<{ ok: boolean; configured: boolean }>("/api/imap/config");
       setImapStatus({ configured: false });
-      setImapForm({ host: "", port: 993, username: "", password: "", mailbox: "INBOX" });
+      setImapForm({ host: "", port: 993, username: "", password: "", mailbox: "INBOX", smtpHost: "", smtpPort: 587 });
       setImapMessage("Stored IMAP configuration removed.");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "unknown error";
@@ -359,7 +367,7 @@ export function ConfigPage() {
 
       <hr />
       <h3>IMAP</h3>
-      <p>Saved IMAP config is encrypted at rest.</p>
+      <p>Saved mail config is encrypted at rest. SMTP settings fall back to the IMAP-derived host when left blank.</p>
       <label>
         <div>Host</div>
         <input value={imapForm.host} onChange={(event) => setImapForm((prev) => ({ ...prev, host: event.target.value }))} />
@@ -389,6 +397,18 @@ export function ConfigPage() {
         <div>Mailbox</div>
         <input value={imapForm.mailbox} onChange={(event) => setImapForm((prev) => ({ ...prev, mailbox: event.target.value }))} />
       </label>
+      <label>
+        <div>SMTP Host (optional)</div>
+        <input value={imapForm.smtpHost} onChange={(event) => setImapForm((prev) => ({ ...prev, smtpHost: event.target.value }))} placeholder="Defaults to IMAP-derived host" />
+      </label>
+      <label>
+        <div>SMTP Port (optional)</div>
+        <input
+          type="number"
+          value={imapForm.smtpPort}
+          onChange={(event) => setImapForm((prev) => ({ ...prev, smtpPort: Number(event.target.value) || 587 }))}
+        />
+      </label>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button type="button" onClick={saveIMAPConfig} disabled={imapBusy}>
           {imapBusy ? "Saving..." : "Save IMAP Config"}
@@ -409,6 +429,8 @@ export function ConfigPage() {
           {imapStatus.port ? <p>Port: {imapStatus.port}</p> : null}
           {imapStatus.username ? <p>Username: {imapStatus.username}</p> : null}
           {imapStatus.mailbox ? <p>Mailbox: {imapStatus.mailbox}</p> : null}
+          {imapStatus.smtpHost ? <p>SMTP Host: {imapStatus.smtpHost}</p> : null}
+          {imapStatus.smtpPort ? <p>SMTP Port: {imapStatus.smtpPort}</p> : null}
           {imapStatus.updatedAt ? <p>Updated: {imapStatus.updatedAt}</p> : null}
         </div>
       ) : null}

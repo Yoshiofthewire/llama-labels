@@ -85,7 +85,7 @@ body {
 .sidebar a {
   text-decoration: none;
   color: var(--ink-strong);
-  border: 1px solid var(--line);
+  border: 1px solid #d8dde6;
   border-radius: 10px;
   padding: 10px;
   transition: all 180ms ease;
@@ -269,14 +269,17 @@ pre {
   padding: 10px 12px;
   margin-bottom: 14px;
   flex-wrap: wrap;
+  color: #202124;
 }
 
 .health-ok {
-  background: rgba(155, 196, 0, 0.2);
+  background: #ecf7c8;
+  border-color: #b7cf73;
 }
 
 .health-bad {
-  background: rgba(249, 197, 189, 0.35);
+  background: #fde1dc;
+  border-color: #e4a69b;
 }
 
 .health-grid {
@@ -288,19 +291,22 @@ pre {
 .health-card {
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fffaf9;
+  background: #fff;
+  color: #202124;
   padding: 12px;
 }
 
 .health-card h4 {
   margin: 0 0 10px;
   font-size: 0.95rem;
+  color: #3a4352;
 }
 
 .health-value {
   margin: 0;
   font-size: 1.2rem;
   font-weight: 700;
+  color: #202124;
 }
 
 .health-list {
@@ -308,6 +314,7 @@ pre {
   padding-left: 18px;
   display: grid;
   gap: 6px;
+  color: #202124;
 }
 
 .compose-backdrop {
@@ -323,9 +330,10 @@ pre {
 .compose-window {
   width: min(920px, 96vw);
   min-height: min(760px, 90vh);
-  background: var(--panel);
-  border: 1px solid var(--line);
+  background: #f7f7f2;
+  border: 1px solid #d8dde6;
   border-radius: 14px;
+  color: #202124;
   padding: 16px;
   display: grid;
   grid-template-rows: auto auto auto 1fr;
@@ -337,7 +345,7 @@ pre {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid #d8dde6;
   padding-bottom: 10px;
 }
 
@@ -357,13 +365,17 @@ pre {
 .compose-trash,
 .compose-close {
   background: transparent;
-  border-color: var(--line);
-  color: var(--ink-strong);
+  border-color: #c8d0db;
+  color: #3a4352;
 }
 
 .compose-form-grid {
   display: grid;
   gap: 8px;
+  background: #fff;
+  border: 1px solid #d8dde6;
+  border-radius: 10px;
+  padding: 12px;
 }
 
 .compose-field-row {
@@ -375,7 +387,13 @@ pre {
 
 .compose-field-row span {
   font-weight: 700;
-  color: var(--ink-strong);
+  color: #3a4352;
+}
+
+.compose-field-row input {
+  background: #fff;
+  color: #202124;
+  border: 1px solid #c8d0db;
 }
 
 .compose-mode-bar {
@@ -421,6 +439,7 @@ pre {
   border-bottom: 1px solid #d8dde6;
   border-radius: 10px 10px 0 0;
   background: #f0f5d7;
+  color: #2f3a00;
 }
 
 .compose-editor-html .ql-container.ql-snow {
@@ -459,6 +478,17 @@ pre {
 
 .compose-editor-html .ql-toolbar .ql-picker {
   color: #2f3a00;
+}
+
+.compose-editor-html .ql-picker-options {
+  background: #fff;
+  color: #202124;
+  border: 1px solid #d8dde6;
+}
+
+.compose-editor-html .ql-editor.ql-blank::before {
+  color: #6b7280;
+  font-style: normal;
 }
 
 .compose-editor-html .ql-toolbar button.ql-active,

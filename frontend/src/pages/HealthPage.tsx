@@ -13,6 +13,7 @@ type Health = {
 type RunStatus = {
   scanIntervalSeconds: number;
   checkpoint: string;
+  emailsProcessedLastHour?: number;
 };
 
 function formatDuration(totalSeconds: number): string {
@@ -131,6 +132,10 @@ export function HealthPage() {
             <article className="health-card">
               <h4>Scan Interval</h4>
               <p className="health-value">{runStatus?.scanIntervalSeconds != null ? `${runStatus.scanIntervalSeconds}s` : "-"}</p>
+            </article>
+            <article className="health-card">
+              <h4>Emails Processed Last Hour</h4>
+              <p className="health-value">{runStatus?.emailsProcessedLastHour ?? 0}</p>
             </article>
             <article className="health-card">
               <h4>Checkpoint</h4>

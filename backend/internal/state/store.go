@@ -165,6 +165,18 @@ func (s *Store) Decisions(limit int) []Decision {
 	return out
 }
 
+func (s *Store) ProcessedSince(since time.Time) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, processedAt := range s.processedSet {
+		if !processedAt.Before(since) {
+			count++
+		}
+	}
+	return count
+}
+
 func (s *Store) persistLocked() error {
 	processed := make(map[string]string, len(s.processedSet))
 	for id, ts := range s.processedSet {

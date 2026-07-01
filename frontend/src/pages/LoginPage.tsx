@@ -19,9 +19,10 @@ type SetupState = {
 type LoginPageProps = {
   auth: AuthState;
   onAuthChanged: () => Promise<void> | void;
+  mode?: "login" | "password";
 };
 
-export function LoginPage({ auth, onAuthChanged }: LoginPageProps) {
+export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProps) {
   const navigate = useNavigate();
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
@@ -30,16 +31,22 @@ export function LoginPage({ auth, onAuthChanged }: LoginPageProps) {
   const [needsPasswordChange, setNeedsPasswordChange] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const passwordMode = mode === "password";
 
   useEffect(() => {
+    if (passwordMode) {
+      setNeedsPasswordChange(true);
+      setUsername(auth.username ?? username);
+      return;
+    }
     if (auth.authenticated && !auth.mustChangePassword) {
-      navigate("/status", { replace: true });
+      navigate("/read", { replace: true });
     }
     if (auth.mustChangePassword) {
       setNeedsPasswordChange(true);
       setUsername(auth.username ?? username);
     }
-  }, [auth.authenticated, auth.mustChangePassword]);
+  }, [auth.authenticated, auth.mustChangePassword, auth.username, navigate, passwordMode, username]);
 
   useEffect(() => {
     getJSON<SetupState>("/api/setup")
@@ -68,7 +75,7 @@ export function LoginPage({ auth, onAuthChanged }: LoginPageProps) {
         setOldPassword(password);
         setStatus("Password change required before using the app.");
       } else {
-        navigate("/status", { replace: true });
+        navigate("/read", { replace: true });
       }
     } catch {
       setStatus("Login failed. Check username and password.");
@@ -99,7 +106,7 @@ export function LoginPage({ auth, onAuthChanged }: LoginPageProps) {
       setOldPassword("");
       setNewPassword("");
       setStatus("Password updated. You can now continue.");
-      navigate("/status", { replace: true });
+      navigate("/read", { replace: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : "";
       if (message.includes("401")) {
@@ -114,8 +121,8 @@ export function LoginPage({ auth, onAuthChanged }: LoginPageProps) {
 
   return (
     <section className="panel">
-      <h2>Login and Setup</h2>
-      <p>Use your local admin credentials to access configuration and daemon controls.</p>
+      <h2>{passwordMode ? "Change Password" : "Login and Setup"}</h2>
+      <p>{passwordMode ? "Update your current password to keep using the app." : "Use your local admin credentials to access configuration and daemon controls."}</p>
 
       {!needsPasswordChange ? (
         <form onSubmit={submitLogin} className="auth-form">

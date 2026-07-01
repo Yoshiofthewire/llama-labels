@@ -57,7 +57,7 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 | `GET /api/setup` | no | Returns admin credential bootstrap status |
 | `GET /api/health` | no | 503 when unhealthy |
 | `POST /api/health/repair` | yes | Clears sticky failure state |
-| `GET /api/status` | yes | Scan interval, checkpoint, rate limits, server time |
+| `GET /api/status` | yes | Scan interval, checkpoint, rate limits, emails processed in the last hour, server time |
 | `GET\|PUT /api/config` | yes | Full config; PUT broadcasts to running poller |
 | `GET /api/labels` | yes | Allowed label list |
 | `GET /api/decisions?limit=N` | yes | Audit trail |
@@ -68,7 +68,7 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 | `GET /api/logs/list` | yes | Log file inventory |
 | `GET\|POST /api/llama/auth` | yes | Ollama auth token management |
 | `POST /api/llama/test` | yes | Classify a test email |
-| `GET\|POST\|DELETE /api/imap/config` | yes | Encrypted IMAP credentials |
+| `GET\|POST\|DELETE /api/imap/config` | yes | Encrypted IMAP credentials plus optional SMTP host/port override used by `/api/mail/send` |
 | `POST /api/imap/test` | yes | Live IMAP connectivity check |
 | `POST /api/mail/draft` | yes | Saves compose content to the IMAP Drafts folder |
 | `POST /api/mail/send` | yes | Sends compose email via SMTP using configured credentials |

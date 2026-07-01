@@ -112,11 +112,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	s.mu.RLock()
 	cfg := s.cfg
 	s.mu.RUnlock()
+	processedSince := time.Now().UTC().Add(-1 * time.Hour)
 	resp := map[string]any{
-		"scanIntervalSeconds": cfg.Scan.IntervalSeconds,
-		"rateLimits":          cfg.RateLimits,
-		"checkpoint":          s.store.Checkpoint(),
-		"serverTimeUtc":       time.Now().UTC().Format(time.RFC3339),
+		"scanIntervalSeconds":     cfg.Scan.IntervalSeconds,
+		"rateLimits":              cfg.RateLimits,
+		"checkpoint":              s.store.Checkpoint(),
+		"emailsProcessedLastHour": s.store.ProcessedSince(processedSince),
+		"serverTimeUtc":           time.Now().UTC().Format(time.RFC3339),
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -127,6 +129,8 @@ type imapConfigPayload struct {
 	Username  string `json:"username"`
 	Password  string `json:"password"`
 	Mailbox   string `json:"mailbox"`
+	SMTPHost  string `json:"smtpHost,omitempty"`
+	SMTPPort  int    `json:"smtpPort,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
@@ -136,11 +140,15 @@ func normalizeIMAPPayload(p imapConfigPayload) imapConfigPayload {
 	p.Username = strings.TrimSpace(p.Username)
 	p.Password = strings.TrimSpace(p.Password)
 	p.Mailbox = strings.TrimSpace(p.Mailbox)
+	p.SMTPHost = strings.TrimSpace(p.SMTPHost)
 	if p.Port <= 0 {
 		p.Port = 993
 	}
 	if p.Mailbox == "" {
 		p.Mailbox = "INBOX"
+	}
+	if p.SMTPHost != "" && p.SMTPPort <= 0 {
+		p.SMTPPort = 587
 	}
 	return p
 }
@@ -165,6 +173,8 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 			"port":            payload.Port,
 			"username":        payload.Username,
 			"mailbox":         payload.Mailbox,
+			"smtpHost":        payload.SMTPHost,
+			"smtpPort":        payload.SMTPPort,
 			"updatedAt":       payload.UpdatedAt,
 			"encryptedAtRest": true,
 		})
@@ -200,6 +210,8 @@ func (s *Server) handleIMAPConfig(w http.ResponseWriter, r *http.Request) {
 			"port":            payload.Port,
 			"username":        payload.Username,
 			"mailbox":         payload.Mailbox,
+			"smtpHost":        payload.SMTPHost,
+			"smtpPort":        payload.SMTPPort,
 			"updatedAt":       payload.UpdatedAt,
 			"encryptedAtRest": true,
 		})
@@ -354,7 +366,10 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	smtpHost := strings.TrimSpace(envOrDefault("SMTP_HOST", ""))
+	smtpHost := strings.TrimSpace(payload.SMTPHost)
+	if smtpHost == "" {
+		smtpHost = strings.TrimSpace(envOrDefault("SMTP_HOST", ""))
+	}
 	if smtpHost == "" {
 		smtpHost = deriveSMTPHost(payload.Host)
 	}
@@ -362,7 +377,10 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "smtp host is not configured", http.StatusBadRequest)
 		return
 	}
-	smtpPort := envInt("SMTP_PORT", 587)
+	smtpPort := payload.SMTPPort
+	if smtpPort <= 0 {
+		smtpPort = envInt("SMTP_PORT", 587)
+	}
 	if smtpPort <= 0 {
 		smtpPort = 587
 	}
@@ -485,11 +503,15 @@ func readIMAPConfigPayload(path, keyPath string) (imapConfigPayload, bool, error
 	payload.Username = strings.TrimSpace(payload.Username)
 	payload.Password = strings.TrimSpace(payload.Password)
 	payload.Mailbox = strings.TrimSpace(payload.Mailbox)
+	payload.SMTPHost = strings.TrimSpace(payload.SMTPHost)
 	if payload.Port <= 0 {
 		payload.Port = 993
 	}
 	if payload.Mailbox == "" {
 		payload.Mailbox = "INBOX"
+	}
+	if payload.SMTPHost != "" && payload.SMTPPort <= 0 {
+		payload.SMTPPort = 587
 	}
 	return payload, true, nil
 }
