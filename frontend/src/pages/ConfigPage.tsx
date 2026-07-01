@@ -9,6 +9,12 @@ type AppConfig = {
   rateLimits: { perMinute: number; perHour: number };
   labels: { allowlist: string[]; keywordMappings: Record<string, string[]> };
   llama: { baseUrl: string; apiKey: string; classifyPath: string };
+  notifications: {
+    mode: "all" | "folder" | "none";
+    folder: string;
+    publicKey: string;
+    privateKeyPath: string;
+  };
 };
 
 type LabelsResponse = {
@@ -84,6 +90,12 @@ function normalizeConfig(input: unknown): AppConfig {
       baseUrl: llama.baseUrl ?? "",
       apiKey: llama.apiKey ?? "",
       classifyPath: llama.classifyPath ?? "/"
+    },
+    notifications: {
+      mode: source.notifications?.mode ?? "none",
+      folder: source.notifications?.folder ?? "",
+      publicKey: source.notifications?.publicKey ?? "",
+      privateKeyPath: source.notifications?.privateKeyPath ?? ""
     }
   };
 }

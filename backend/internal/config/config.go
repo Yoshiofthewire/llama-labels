@@ -1,9 +1,16 @@
 package config
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	crand "crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -41,6 +48,15 @@ type Config struct {
 		Allowlist       []string            `yaml:"allowlist" json:"allowlist"`
 		KeywordMappings map[string][]string `yaml:"keywordMappings" json:"keywordMappings"`
 	} `yaml:"labels" json:"labels"`
+
+	Notifications NotificationSettings `yaml:"notifications" json:"notifications"`
+}
+
+type NotificationSettings struct {
+	Mode           string `yaml:"mode" json:"mode"`
+	Folder         string `yaml:"folder" json:"folder"`
+	PublicKey      string `yaml:"publicKey" json:"publicKey"`
+	PrivateKeyPath string `yaml:"privateKeyPath" json:"privateKeyPath"`
 }
 
 type Pattern struct {
@@ -68,17 +84,36 @@ func Default() Config {
 		{Name: "card", Regex: `\\b(?:\\d[ -]*?){13,19}\\b`, Replacement: "[REDACTED_CARD]"},
 	}
 	cfg.Labels.KeywordMappings = map[string][]string{}
+	cfg.Notifications.Mode = "none"
 	return cfg
 }
 
 func LoadOrInit(path string) (Config, error) {
+	configDir := filepath.Dir(path)
 	if _, err := os.Stat(path); err == nil {
-		return Load(path)
+		cfg, err := Load(path)
+		if err != nil {
+			return Config{}, err
+		}
+		changed, err := ensureNotificationKeyMaterial(configDir, &cfg)
+		if err != nil {
+			return Config{}, err
+		}
+		if changed {
+			if err := Save(path, cfg); err != nil {
+				return Config{}, err
+			}
+		}
+		return cfg, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return Config{}, fmt.Errorf("mkdir config dir: %w", err)
 	}
 	cfg := Default()
+	_, err := ensureNotificationKeyMaterial(configDir, &cfg)
+	if err != nil {
+		return Config{}, err
+	}
 	if err := Save(path, cfg); err != nil {
 		return Config{}, err
 	}
@@ -106,4 +141,65 @@ func Save(path string, cfg Config) error {
 		return err
 	}
 	return os.WriteFile(path, b, 0o600)
+}
+
+func ensureNotificationKeyMaterial(configDir string, cfg *Config) (bool, error) {
+	changed := false
+	if strings.TrimSpace(cfg.Notifications.PrivateKeyPath) == "" {
+		cfg.Notifications.PrivateKeyPath = filepath.Join(configDir, "notifications-vapid-private.pem")
+		changed = true
+	}
+	key, err := loadOrCreateNotificationPrivateKey(cfg.Notifications.PrivateKeyPath)
+	if err != nil {
+		return changed, err
+	}
+	publicKey := base64.RawURLEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), key.PublicKey.X, key.PublicKey.Y))
+	if cfg.Notifications.PublicKey != publicKey {
+		cfg.Notifications.PublicKey = publicKey
+		changed = true
+	}
+	return changed, nil
+}
+
+func loadOrCreateNotificationPrivateKey(path string) (*ecdsa.PrivateKey, error) {
+	if b, err := os.ReadFile(path); err == nil {
+		block, _ := pem.Decode(b)
+		if block == nil {
+			return nil, fmt.Errorf("decode notification private key: pem block missing")
+		}
+		key, err := x509.ParseECPrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse notification private key: %w", err)
+		}
+		return key, nil
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir notification key dir: %w", err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), crand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate notification key: %w", err)
+	}
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("marshal notification key: %w", err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("create notification key: %w", err)
+	}
+	if err := pem.Encode(file, &pem.Block{Type: "EC PRIVATE KEY", Bytes: der}); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("write notification key: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return nil, fmt.Errorf("close notification key: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return nil, fmt.Errorf("chmod notification key: %w", err)
+	}
+	return key, nil
 }

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Llama Mail</title>
+  <desc id="desc">A stylized monogram icon for Llama Mail.</desc>
+  <rect width="512" height="512" rx="112" fill="#1a1a1e" />
+  <circle cx="256" cy="256" r="168" fill="#252530" stroke="#c29a72" stroke-width="20" />
+  <path d="M176 162h46v188h-46zM248 162h46v188h-46zM338 166h-38v184h38c33 0 58-23 58-52v-80c0-29-25-52-58-52Z" fill="#e8ddf5" />
+  <path d="M176 350h144v24H176z" fill="#c29a72" />
+</svg>

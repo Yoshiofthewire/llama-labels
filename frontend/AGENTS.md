@@ -25,6 +25,7 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 | `ReadPage.tsx` | `GET /api/inbox?limit=500&mailbox=<name>`, `POST /api/inbox/actions` (bulk inbox actions + read/unread state updates, includes current mailbox context; move actions are triggered by drag-drop from this page) |
 | `HealthPage.tsx` | `GET /api/health`, `GET /api/status` (includes `emailsProcessedLastHour`), `POST /api/health/repair` |
 | `ConfigPage.tsx` | `GET/POST /api/imap/config` (also carries SMTP host/port for sending), `POST /api/imap/test`, `GET|POST /api/llama/auth` |
+| `NotificationsPage.tsx` | `GET|PUT /api/config` (push notification mode, folder scope, and generated key details) |
 | `TuningPage.tsx` | `GET/PUT /api/tuning` |
 | `LabelsPage.tsx` | `GET /api/labels` |
 | `DecisionsPage.tsx` | `GET /api/decisions?limit=10` |

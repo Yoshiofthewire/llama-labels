@@ -9,6 +9,7 @@ import { HealthPage } from "./pages/HealthPage";
 import { LoginPage } from "./pages/LoginPage";
 import { LogsPage } from "./pages/LogsPage";
 import { LabelsPage } from "./pages/LabelsPage";
+import { NotificationsPage } from "./pages/NotificationsPage";
 import { ReadPage } from "./pages/ReadPage";
 import { TuningPage } from "./pages/TuningPage";
 
@@ -16,9 +17,15 @@ const settingsNavItems = [
   ["/login", "Login"],
   ["/health", "Health"],
   ["/config", "Config"],
+  ["/notifications", "Notifications"],
   ["/tuning", "Tuning"],
   ["/logs", "Logs"]
 ] as const;
+
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
 
 type AuthState = {
   authenticated: boolean;
@@ -96,6 +103,8 @@ export function App() {
   const [deleteFolderError, setDeleteFolderError] = useState("");
   const [dragOverFolder, setDragOverFolder] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pwaInstallPrompt, setPwaInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [pwaInstalled, setPwaInstalled] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeTo, setComposeTo] = useState("");
   const [composeCc, setComposeCc] = useState("");
@@ -122,6 +131,33 @@ export function App() {
     refreshAuth();
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const standalone = window.matchMedia("(display-mode: standalone)").matches ||
+      (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+    setPwaInstalled(standalone);
+
+    function onBeforeInstallPrompt(event: Event) {
+      event.preventDefault();
+      setPwaInstallPrompt(event as BeforeInstallPromptEvent);
+    }
+
+    function onAppInstalled() {
+      setPwaInstallPrompt(null);
+      setPwaInstalled(true);
+    }
+
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", onAppInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", onAppInstalled);
+    };
+  }, []);
+
   async function logout() {
     try {
       await postJSON<{ ok: boolean }>("/api/auth/logout", {});
@@ -129,6 +165,19 @@ export function App() {
       setMailboxFolders([]);
       setArchiveFolders([]);
       setAuth({ authenticated: false });
+    }
+  }
+
+  async function installPwa() {
+    if (!pwaInstallPrompt) {
+      return;
+    }
+
+    await pwaInstallPrompt.prompt();
+    const choice = await pwaInstallPrompt.userChoice;
+    setPwaInstallPrompt(null);
+    if (choice.outcome === "accepted") {
+      setPwaInstalled(true);
     }
   }
 
@@ -652,6 +701,19 @@ export function App() {
                   {to === "/login" && auth.authenticated ? "Change Password" : label}
                 </Link>
               ))}
+              {!pwaInstalled ? (
+                <button
+                  type="button"
+                  className="nav-link-button"
+                  onClick={() => void installPwa()}
+                  disabled={!pwaInstallPrompt}
+                  title={pwaInstallPrompt ? "Install this site as a PWA" : "Wait for browser install support"}
+                >
+                  Install PWA
+                </button>
+              ) : (
+                <span title="This site is already installed as a PWA">PWA Installed</span>
+              )}
               {auth.authenticated ? (
                 <button type="button" className="nav-link-button" onClick={logout}>
                   Logout
@@ -672,6 +734,7 @@ export function App() {
               <Route path="/read" element={protect(<ReadPage onOpenDraft={openDraftInCompose} />)} />
           <Route path="/health" element={protect(<HealthPage />)} />
           <Route path="/config" element={protect(<ConfigPage />)} />
+          <Route path="/notifications" element={protect(<NotificationsPage />)} />
           <Route path="/tuning" element={protect(<TuningPage />)} />
           <Route path="/labels" element={protect(<LabelsPage />)} />
           <Route path="/decisions" element={protect(<DecisionsPage />)} />

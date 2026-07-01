@@ -97,6 +97,7 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 | `$CONFIG_DIR/config.yaml` | Main application config |
 | `$CONFIG_DIR/admin.env` | Scrypt-hashed admin credentials |
 | `$CONFIG_DIR/TUNING.md` | Classification prompt template |
+| `$CONFIG_DIR/notifications-vapid-private.pem` | Generated browser push private key for notification subscriptions |
 | `$CONFIG_DIR/llama-auth.json` | Ollama auth token |
 | `$SECRET_DIR/imap-config.json` | Encrypted IMAP credentials |
 | `$SECRET_DIR/imap-config.key` | AES key for IMAP credentials |

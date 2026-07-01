@@ -1,0 +1,23 @@
+{
+  "name": "Llama Mail",
+  "short_name": "Llama Mail",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#1a1a1e",
+  "theme_color": "#1a1a1e",
+  "icons": [
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/llamalabels.png",
+      "sizes": "383x384",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
