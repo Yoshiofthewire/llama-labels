@@ -463,13 +463,15 @@ body {
   display: grid;
   gap: 8px;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .email-reader-body-block {
   margin: 0;
   max-height: 60vh;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px 12px;
@@ -903,7 +905,7 @@ pre {
 
   .sidebar {
     padding: 8px 10px;
-    max-height: 34vh;
+    max-height: 30vh;
     overflow: auto;
   }
 
@@ -921,7 +923,30 @@ pre {
 
   .sidebar nav,
   .sidebar .nav-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
     gap: 6px;
+  }
+
+  .sidebar nav > .inbox-nav-row,
+  .sidebar nav > .nav-heading {
+    width: auto;
+    margin: 0;
+  }
+
+  .sidebar .inbox-nav-row {
+    grid-template-columns: auto auto;
+  }
+
+  .sidebar .nav-group {
+    width: 100%;
+    padding-left: 0;
+  }
+
+  .sidebar .sidebar-folder-row {
+    grid-template-columns: auto auto;
+    width: auto;
   }
 
   .sidebar a,
@@ -940,8 +965,22 @@ pre {
   }
 
   .read-page-panel {
-    height: calc(100vh - 46px);
-    overflow: hidden;
+    height: auto;
+    overflow: visible;
+  }
+
+  .inbox-list-region {
+    min-height: 0;
+  }
+
+  .inbox-table-wrap {
+    flex: none;
+    max-height: 54vh;
+  }
+
+  .inbox-table-scroll {
+    max-height: 54vh;
+    -webkit-overflow-scrolling: touch;
   }
 
   .inbox-action-bar {
@@ -1021,11 +1060,55 @@ pre {
 
   .email-reader-content {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     overflow: hidden;
   }
 
   .email-reader-body-block {
     max-height: none;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .compose-backdrop {
+    padding: 0;
+  }
+
+  .compose-window {
+    width: 100vw;
+    min-height: 100dvh;
+    border-radius: 0;
+    border: 0;
+    padding: 10px;
+  }
+
+  .compose-topbar {
+    align-items: flex-start;
+  }
+
+  .compose-topbar > div {
+    flex-wrap: wrap !important;
+  }
+
+  .compose-topbar button {
+    padding: 7px 8px;
+    font-size: 0.78rem;
+  }
+
+  .compose-form-grid {
+    padding: 10px;
+  }
+
+  .compose-editor {
+    min-height: min(52dvh, 420px);
+  }
+
+  .compose-editor-html .ql-container.ql-snow,
+  .compose-editor-html .ql-editor {
+    min-height: min(46dvh, 360px);
   }
 }
