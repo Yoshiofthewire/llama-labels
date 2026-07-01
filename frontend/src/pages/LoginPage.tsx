@@ -122,7 +122,7 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
   return (
     <section className="panel">
       <h2>{passwordMode ? "Change Password" : "Login and Setup"}</h2>
-      <p>{passwordMode ? "Update your current password to keep using the app." : "Use your local admin credentials to access configuration and daemon controls."}</p>
+      <p>{passwordMode ? "Update your current password." : "Use your local admin credentials to access configuration and daemon controls."}</p>
 
       {!needsPasswordChange ? (
         <form onSubmit={submitLogin} className="auth-form">
@@ -146,7 +146,7 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
       ) : (
         <form onSubmit={submitPasswordChange} className="auth-form">
           <h3>Change Password</h3>
-          <p>Your account requires a password update before you can continue.</p>
+          <p>Enter your current password and choose a new one.</p>
           <label>
             <div>Username</div>
             <input value={username} autoComplete="username" readOnly />
