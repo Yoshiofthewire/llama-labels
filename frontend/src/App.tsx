@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { type DragEvent, useEffect, useRef, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import Quill from "quill";
 import "quill/dist/quill.snow.css";
-import { deleteJSON, getJSON, postJSON } from "./api/client";
+import { deleteJSON, getJSON, postJSON, putJSON } from "./api/client";
 import { ConfigPage } from "./pages/ConfigPage";
 import { DecisionsPage } from "./pages/DecisionsPage";
 import { HealthPage } from "./pages/HealthPage";
@@ -49,6 +49,26 @@ type DeleteFolderResponse = {
   folder: string;
 };
 
+type RenameFolderResponse = {
+  ok: boolean;
+  folder: string;
+  renamed: string;
+  parent: string;
+};
+
+type MoveInboxActionResponse = {
+  ok: boolean;
+  action: "move";
+  processed: number;
+  failed: Array<{ messageId: string; error: string }>;
+  targetMailbox: string;
+};
+
+type DragMessagePayload = {
+  messageIds: string[];
+  mailbox: string;
+};
+
 type DraftComposePayload = {
   sentTo?: string;
   cc?: string;
@@ -63,14 +83,18 @@ export function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [mailboxFolders, setMailboxFolders] = useState<InboxFolder[]>([]);
   const [mailboxFoldersLoading, setMailboxFoldersLoading] = useState(false);
+  const [inboxCreateOpen, setInboxCreateOpen] = useState(false);
   const [createFolderName, setCreateFolderName] = useState("");
   const [createFolderLoading, setCreateFolderLoading] = useState(false);
   const [createFolderError, setCreateFolderError] = useState("");
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveFolders, setArchiveFolders] = useState<InboxFolder[]>([]);
   const [archiveFoldersLoading, setArchiveFoldersLoading] = useState(false);
+  const [folderMenuPath, setFolderMenuPath] = useState("");
   const [deleteFolderLoading, setDeleteFolderLoading] = useState("");
+  const [renameFolderLoading, setRenameFolderLoading] = useState("");
   const [deleteFolderError, setDeleteFolderError] = useState("");
+  const [dragOverFolder, setDragOverFolder] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeTo, setComposeTo] = useState("");
@@ -139,6 +163,7 @@ export function App() {
         name
       });
       setCreateFolderName("");
+      setInboxCreateOpen(false);
       await loadMailboxFolders();
     } catch (e) {
       const message = e instanceof Error ? e.message : "failed to create folder";
@@ -165,13 +190,14 @@ export function App() {
   }
 
   async function deleteInboxFolder(folder: InboxFolder) {
-    if (!folder.deletable || deleteFolderLoading) return;
+    if (!folder.deletable || deleteFolderLoading || renameFolderLoading) return;
     const confirmed = typeof window === "undefined"
       ? true
       : window.confirm(`Delete ${mailboxLabel(folder.path)} and move its emails to ${mailboxLabel(folder.path.slice(0, Math.max(folder.path.lastIndexOf("/"), folder.path.lastIndexOf(".")))) || "the parent folder"}?`);
     if (!confirmed) return;
 
     setDeleteFolderLoading(folder.path);
+    setFolderMenuPath("");
     setDeleteFolderError("");
     setCreateFolderError("");
     try {
@@ -189,12 +215,93 @@ export function App() {
     }
   }
 
+  async function renameInboxFolder(folder: InboxFolder) {
+    if (!folder.deletable || renameFolderLoading || deleteFolderLoading) return;
+    const current = mailboxLabel(folder.path);
+    const nextName = typeof window === "undefined" ? "" : window.prompt("Rename folder", current) ?? "";
+    const name = nextName.trim();
+    if (!name || name === current) {
+      setFolderMenuPath("");
+      return;
+    }
+
+    setRenameFolderLoading(folder.path);
+    setFolderMenuPath("");
+    setDeleteFolderError("");
+    setCreateFolderError("");
+    try {
+      const response = await putJSON<RenameFolderResponse>("/api/inbox/folders", {
+        folder: folder.path,
+        name
+      });
+      const params = new URLSearchParams(location.search);
+      if (location.pathname === "/read" && params.get("mailbox") === folder.path) {
+        navigate(`/read?mailbox=${encodeURIComponent(response.renamed)}`, { replace: true });
+      }
+      await loadMailboxFolders();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "failed to rename folder";
+      setDeleteFolderError(message);
+    } finally {
+      setRenameFolderLoading("");
+    }
+  }
+
+  function parseDragPayload(raw: string): DragMessagePayload | null {
+    try {
+      const parsed = JSON.parse(raw) as DragMessagePayload;
+      if (!Array.isArray(parsed.messageIds) || parsed.messageIds.length === 0) return null;
+      const messageIds = parsed.messageIds.map((value) => String(value).trim()).filter(Boolean);
+      const mailbox = String(parsed.mailbox || "").trim();
+      if (messageIds.length === 0 || mailbox === "") return null;
+      return { messageIds, mailbox };
+    } catch {
+      return null;
+    }
+  }
+
+  async function moveDraggedMessages(targetMailbox: string, event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    setDragOverFolder("");
+    const payload = parseDragPayload(event.dataTransfer.getData("application/x-llama-mailbox"));
+    if (!payload) return;
+    if (payload.mailbox.toLowerCase() === targetMailbox.toLowerCase()) return;
+
+    setDeleteFolderError("");
+    setCreateFolderError("");
+    try {
+      const response = await postJSON<MoveInboxActionResponse>("/api/inbox/actions", {
+        action: "move",
+        mailbox: payload.mailbox,
+        targetMailbox,
+        messageIds: payload.messageIds
+      });
+      if (response.failed.length > 0) {
+        throw new Error(response.failed[0]?.error || "some emails could not be moved");
+      }
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("mailbox-move-complete", {
+          detail: {
+            sourceMailbox: payload.mailbox,
+            targetMailbox
+          }
+        }));
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "failed to move email";
+      setDeleteFolderError(message);
+    }
+  }
+
   useEffect(() => {
     if (!auth?.authenticated) {
       setMailboxFolders([]);
+      setInboxCreateOpen(false);
       setCreateFolderError("");
       setCreateFolderName("");
+      setFolderMenuPath("");
       setDeleteFolderError("");
+      setDragOverFolder("");
       return;
     }
     void loadMailboxFolders();
@@ -289,7 +396,7 @@ export function App() {
     setComposeSuccess("");
     const body = quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody;
     try {
-      await postJSON<{ ok: boolean }>("/api/mail/send", {
+      const result = await postJSON<{ ok: boolean; sentSaved?: boolean; warning?: string }>("/api/mail/send", {
         to,
         cc: composeCc.trim(),
         bcc: composeBcc.trim(),
@@ -297,6 +404,10 @@ export function App() {
         body,
         mode: "html"
       });
+      if (result.warning) {
+        setComposeSuccess(`Email sent. ${result.warning}`);
+        return;
+      }
       setComposeSuccess("Email sent.");
       setComposeOpen(false);
       resetComposeForm();
@@ -366,44 +477,104 @@ export function App() {
           New Email
         </button>
         <nav>
-          <Link to="/read">Inbox</Link>
-          <div className="nav-group">
-            <form
-              className="sidebar-folder-form"
-              onSubmit={(event) => {
+          <div className="inbox-nav-row">
+            <Link
+              to="/read"
+              className={dragOverFolder === "INBOX" ? "drop-target-active" : ""}
+              onDragOver={(event) => {
                 event.preventDefault();
-                void createInboxFolder();
+                setDragOverFolder("INBOX");
+              }}
+              onDragLeave={() => setDragOverFolder("")}
+              onDrop={(event) => {
+                void moveDraggedMessages("INBOX", event);
               }}
             >
-              <input
-                type="text"
-                value={createFolderName}
-                onChange={(event) => setCreateFolderName(event.target.value)}
-                placeholder="New folder under Inbox"
-                disabled={createFolderLoading}
-              />
-              <button type="submit" disabled={createFolderLoading}>
-                {createFolderLoading ? "Creating..." : "Create Folder"}
-              </button>
-            </form>
+              Inbox
+            </Link>
+            <button
+              type="button"
+              className="inbox-expand-button"
+              aria-expanded={inboxCreateOpen}
+              onClick={() => {
+                setInboxCreateOpen((open) => !open);
+                setCreateFolderError("");
+              }}
+            >
+              +
+            </button>
+          </div>
+          <div className="nav-group">
+            {inboxCreateOpen ? (
+              <form
+                className="sidebar-folder-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void createInboxFolder();
+                }}
+              >
+                <input
+                  type="text"
+                  value={createFolderName}
+                  onChange={(event) => setCreateFolderName(event.target.value)}
+                  placeholder="New folder under Inbox"
+                  disabled={createFolderLoading}
+                />
+                <button type="submit" disabled={createFolderLoading}>
+                  {createFolderLoading ? "Creating..." : "Create Folder"}
+                </button>
+              </form>
+            ) : null}
             {createFolderError ? <span className="sidebar-folder-error">{createFolderError}</span> : null}
             {deleteFolderError ? <span className="sidebar-folder-error">{deleteFolderError}</span> : null}
             {mailboxFoldersLoading ? <span>Loading folders...</span> : null}
             {!mailboxFoldersLoading
               ? mailboxFolders.map((folder) => (
                   <div key={folder.path} className="sidebar-folder-row">
-                    <Link to={`/read?mailbox=${encodeURIComponent(folder.path)}`}>
+                    <Link
+                      to={`/read?mailbox=${encodeURIComponent(folder.path)}`}
+                      className={dragOverFolder === folder.path ? "drop-target-active" : ""}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        setDragOverFolder(folder.path);
+                      }}
+                      onDragLeave={() => setDragOverFolder("")}
+                      onDrop={(event) => {
+                        void moveDraggedMessages(folder.path, event);
+                      }}
+                    >
                       {mailboxLabel(folder.path)}
                     </Link>
                     {folder.deletable ? (
-                      <button
-                        type="button"
-                        className="sidebar-folder-delete"
-                        onClick={() => void deleteInboxFolder(folder)}
-                        disabled={deleteFolderLoading === folder.path}
-                      >
-                        {deleteFolderLoading === folder.path ? "Deleting..." : "Delete"}
-                      </button>
+                      <div className="sidebar-folder-menu-wrap">
+                        <button
+                          type="button"
+                          className="sidebar-folder-menu-button"
+                          aria-label={`Folder options for ${mailboxLabel(folder.path)}`}
+                          onClick={() => setFolderMenuPath((current) => (current === folder.path ? "" : folder.path))}
+                          disabled={deleteFolderLoading === folder.path || renameFolderLoading === folder.path}
+                        >
+                          ...
+                        </button>
+                        {folderMenuPath === folder.path ? (
+                          <div className="sidebar-folder-menu">
+                            <button
+                              type="button"
+                              onClick={() => void renameInboxFolder(folder)}
+                              disabled={renameFolderLoading === folder.path}
+                            >
+                              {renameFolderLoading === folder.path ? "Renaming..." : "Rename"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void deleteInboxFolder(folder)}
+                              disabled={deleteFolderLoading === folder.path}
+                            >
+                              {deleteFolderLoading === folder.path ? "Deleting..." : "Delete"}
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 ))
@@ -425,7 +596,19 @@ export function App() {
               {!archiveFoldersLoading && archiveFolders.length === 0 ? <span>No archive folders</span> : null}
               {!archiveFoldersLoading
                 ? archiveFolders.map((folder) => (
-                    <Link key={folder.path} to={`/read?mailbox=${encodeURIComponent(folder.path)}`}>
+                    <Link
+                      key={folder.path}
+                      to={`/read?mailbox=${encodeURIComponent(folder.path)}`}
+                      className={dragOverFolder === folder.path ? "drop-target-active" : ""}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        setDragOverFolder(folder.path);
+                      }}
+                      onDragLeave={() => setDragOverFolder("")}
+                      onDrop={(event) => {
+                        void moveDraggedMessages(folder.path, event);
+                      }}
+                    >
                       {mailboxLabel(folder.path)}
                     </Link>
                   ))

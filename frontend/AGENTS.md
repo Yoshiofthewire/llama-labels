@@ -15,14 +15,14 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 - Auth state is owned by `App.tsx`; pages read it via props, not via direct `/api/auth/me` calls
 - All pages live under `src/pages/`; routing is defined in `App.tsx`
 - Session cookie (`credentials: 'include'`) is required on every API call — this is handled by `client.ts`
-- Compose window is owned by `App.tsx`; it always uses Quill WYSIWYG and sends via `POST /api/mail/send`
+- Compose window is owned by `App.tsx`; it always uses Quill WYSIWYG and sends via `POST /api/mail/send` (UI shows backend warning when SMTP send succeeds but Sent-folder append fails)
 
 ### Page → API Mapping
 
 | Page | Endpoints used |
 |------|---------------|
 | `LoginPage.tsx` | `POST /api/auth/login`, `POST /api/auth/password` (`/login` sign-in plus protected `/password` change-password mode) |
-| `ReadPage.tsx` | `GET /api/inbox?limit=500&mailbox=<name>`, `POST /api/inbox/actions` (bulk inbox actions + read/unread state updates, includes current mailbox context) |
+| `ReadPage.tsx` | `GET /api/inbox?limit=500&mailbox=<name>`, `POST /api/inbox/actions` (bulk inbox actions + read/unread state updates, includes current mailbox context; move actions are triggered by drag-drop from this page) |
 | `HealthPage.tsx` | `GET /api/health`, `GET /api/status` (includes `emailsProcessedLastHour`), `POST /api/health/repair` |
 | `ConfigPage.tsx` | `GET/POST /api/imap/config` (also carries SMTP host/port for sending), `POST /api/imap/test`, `GET|POST /api/llama/auth` |
 | `TuningPage.tsx` | `GET/PUT /api/tuning` |
@@ -34,7 +34,15 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 
 | Component | Endpoints used |
 |-----------|----------------|
-| `App.tsx` | `GET /api/auth/me`, `GET /api/inbox/folders`, `POST /api/inbox/folders` (create child folder under Inbox), `DELETE /api/inbox/folders?folder=<path>` (delete custom Inbox child folder after moving messages to its parent), `GET /api/inbox/folders?parent=Archive`, `POST /api/auth/logout`, `POST /api/mail/send`, `POST /api/mail/draft` |
+| `App.tsx` | `GET /api/auth/me`, `GET /api/inbox/folders`, `POST /api/inbox/folders` (create child folder under Inbox), `PUT /api/inbox/folders` (rename custom Inbox child folder), `DELETE /api/inbox/folders?folder=<path>` (delete custom Inbox child folder after moving messages to its parent), `GET /api/inbox/folders?parent=Archive`, `POST /api/inbox/actions` (drag-drop folder moves), `POST /api/auth/logout`, `POST /api/mail/send`, `POST /api/mail/draft` |
+
+### Theme System
+
+- Client theme selection is local-only and persisted in browser storage (`localStorage` key `llama-lab-theme`)
+- Theme presets are owned by `src/theme.ts`
+- Preset names include: Dark Matter, Light Matter, Tropics, Tropic Night, Ocean, Coffee, Cliffs, Cyber Punk, Neon Purple, Space, Sky, Forest, Sun
+- Theme initialization runs in `main.tsx` before rendering via `applyStoredTheme()`
+- Config page includes a Theme selector and Apply Theme button in Application settings
 
 ### Auth Flow
 
@@ -50,8 +58,10 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 - Do not add direct `fetch` calls outside `src/api/client.ts`
 - Add new pages to the router in `App.tsx` and the nav layout in the same file
 - Left nav inbox links are driven by `GET /api/inbox/folders` for top-level non-Archive folders and `GET /api/inbox/folders?parent=Archive` for archive buckets
+- Inbox row uses a right-side `+` toggle to expand/collapse the create-folder form
 - Inbox sidebar folder creation uses `POST /api/inbox/folders` with `parent=INBOX`; folder names are single-level only so the server can choose the correct IMAP hierarchy delimiter
-- Inbox sidebar delete buttons render only for server-marked custom folders; delete moves messages to the parent mailbox first and built-in IMAP folders must not render as deletable
+- Custom folder controls are behind a three-dot menu with Rename and Delete; built-in IMAP folders must not render this menu
+- Dragging an email row from ReadPage and dropping onto a sidebar folder (including Inbox and Archive buckets) sends `POST /api/inbox/actions` with `action=move` and refreshes mailbox views via a `mailbox-move-complete` window event
 
 ## Verification
 

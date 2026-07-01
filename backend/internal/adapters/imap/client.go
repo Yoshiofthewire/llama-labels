@@ -77,11 +77,13 @@ type Client interface {
 	ListLabels(ctx context.Context) ([]string, error)
 	ListSubfolders(ctx context.Context, parent string) ([]string, error)
 	CreateFolder(ctx context.Context, parent, name string) (string, error)
+	RenameFolder(ctx context.Context, folder, name string) (string, error)
 	DeleteFolder(ctx context.Context, folder string) error
 	EnsureLabel(ctx context.Context, label string) error
 	ApplyLabel(ctx context.Context, messageID, label string) error
-	ApplyInboxAction(ctx context.Context, messageID, action, mailbox string) error
+	ApplyInboxAction(ctx context.Context, messageID, action, mailbox, targetMailbox string) error
 	SaveDraft(ctx context.Context, draft DraftMessage) error
+	SaveSent(ctx context.Context, draft DraftMessage) error
 }
 
 type StubClient struct{}
@@ -114,6 +116,22 @@ func (s *StubClient) CreateFolder(_ context.Context, parent, name string) (strin
 	return parent + "/" + name, nil
 }
 
+func (s *StubClient) RenameFolder(_ context.Context, folder, name string) (string, error) {
+	folder = strings.TrimSpace(folder)
+	name = strings.TrimSpace(name)
+	if folder == "" {
+		return "", errors.New("folder is required")
+	}
+	if name == "" {
+		return "", errors.New("folder name is required")
+	}
+	parent := mailboxParent(folder)
+	if parent == "" {
+		return name, nil
+	}
+	return parent + "/" + name, nil
+}
+
 func (s *StubClient) DeleteFolder(_ context.Context, folder string) error {
 	if strings.TrimSpace(folder) == "" {
 		return errors.New("folder is required")
@@ -129,11 +147,15 @@ func (s *StubClient) ApplyLabel(_ context.Context, _ string, _ string) error {
 	return nil
 }
 
-func (s *StubClient) ApplyInboxAction(_ context.Context, _ string, _ string, _ string) error {
+func (s *StubClient) ApplyInboxAction(_ context.Context, _ string, _ string, _ string, _ string) error {
 	return nil
 }
 
 func (s *StubClient) SaveDraft(_ context.Context, _ DraftMessage) error {
+	return nil
+}
+
+func (s *StubClient) SaveSent(_ context.Context, _ DraftMessage) error {
 	return nil
 }
 
@@ -799,6 +821,61 @@ func (c *APIClient) DeleteFolder(ctx context.Context, folder string) error {
 	return nil
 }
 
+func (c *APIClient) RenameFolder(ctx context.Context, folder, name string) (string, error) {
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	folder = strings.TrimSpace(folder)
+	name = strings.TrimSpace(name)
+	if folder == "" {
+		return "", errors.New("folder is required")
+	}
+	if name == "" {
+		return "", errors.New("folder name is required")
+	}
+	if strings.ContainsAny(name, "/.") {
+		return "", errors.New("folder name must be a single level without / or .")
+	}
+	parent := mailboxParent(folder)
+	if parent == "" {
+		return "", errors.New("folder must have a parent mailbox")
+	}
+
+	d, err := c.ensureConnectedLocked()
+	if err != nil {
+		return "", err
+	}
+
+	folders, err := d.GetFolders()
+	if err != nil {
+		return "", fmt.Errorf("imap list folders: %w", err)
+	}
+	delimiter := "/"
+	if strings.Contains(folder, ".") {
+		delimiter = "."
+	}
+	if !strings.Contains(folder, "/") && !strings.Contains(folder, ".") {
+		for _, candidate := range preferredMailboxDelimiters(parent, folders) {
+			delimiter = candidate
+			break
+		}
+	}
+	newPath := parent + delimiter + name
+	if strings.EqualFold(folder, newPath) {
+		return folder, nil
+	}
+	if containsMailboxPath(folders, newPath) {
+		return "", fmt.Errorf("folder %q already exists", newPath)
+	}
+	if err := d.RenameFolder(folder, newPath); err != nil {
+		return "", fmt.Errorf("imap rename folder %q to %q: %w", folder, newPath, err)
+	}
+	return newPath, nil
+}
+
 func (c *APIClient) EnsureLabel(ctx context.Context, label string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -838,7 +915,7 @@ func (c *APIClient) ApplyLabel(ctx context.Context, messageID, label string) err
 	return nil
 }
 
-func (c *APIClient) ApplyInboxAction(ctx context.Context, messageID, action, mailbox string) error {
+func (c *APIClient) ApplyInboxAction(ctx context.Context, messageID, action, mailbox, targetMailbox string) error {
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
 
@@ -850,6 +927,7 @@ func (c *APIClient) ApplyInboxAction(ctx context.Context, messageID, action, mai
 		return fmt.Errorf("invalid message id %q", messageID)
 	}
 	action = strings.ToLower(strings.TrimSpace(action))
+	targetMailbox = strings.TrimSpace(targetMailbox)
 
 	d, err := c.ensureConnectedLocked()
 	if err != nil {
@@ -935,6 +1013,17 @@ func (c *APIClient) ApplyInboxAction(ctx context.Context, messageID, action, mai
 			return fmt.Errorf("imap move uid %d to Trash: %w", uid, lastErr)
 		}
 		return nil
+	case "move":
+		if targetMailbox == "" {
+			return errors.New("target mailbox is required")
+		}
+		if strings.EqualFold(strings.TrimSpace(mailbox), targetMailbox) {
+			return nil
+		}
+		if err := moveToFolder(targetMailbox); err != nil {
+			return fmt.Errorf("imap move uid %d to %q: %w", uid, targetMailbox, err)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported inbox action %q", action)
 	}
@@ -983,20 +1072,20 @@ func (c *APIClient) SaveDraft(ctx context.Context, draft DraftMessage) error {
 	message.WriteString("\r\n")
 	message.WriteString(draft.Body)
 
-	appendToFolder := func(folder string) error {
-		if err := d.Append(folder, []string{"\\Draft"}, time.Now(), []byte(message.String())); err == nil {
+	appendToFolder := func(folder string, flags []string) error {
+		if err := d.Append(folder, flags, time.Now(), []byte(message.String())); err == nil {
 			return nil
 		}
 		if err := d.CreateFolder(folder); err != nil {
 			return err
 		}
-		return d.Append(folder, []string{"\\Draft"}, time.Now(), []byte(message.String()))
+		return d.Append(folder, flags, time.Now(), []byte(message.String()))
 	}
 
 	targets := []string{"Drafts", "INBOX/Drafts", "INBOX.Drafts"}
 	var lastErr error
 	for _, folder := range targets {
-		if err := appendToFolder(folder); err == nil {
+		if err := appendToFolder(folder, []string{"\\Draft"}); err == nil {
 			return nil
 		} else {
 			lastErr = err
@@ -1006,6 +1095,70 @@ func (c *APIClient) SaveDraft(ctx context.Context, draft DraftMessage) error {
 		return fmt.Errorf("failed to save draft: %w", lastErr)
 	}
 	return errors.New("failed to save draft")
+}
+
+func (c *APIClient) SaveSent(ctx context.Context, draft DraftMessage) error {
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(draft.To) == 0 {
+		return errors.New("at least one TO recipient is required")
+	}
+
+	d, err := c.ensureConnectedLocked()
+	if err != nil {
+		return err
+	}
+
+	subject := sanitizeDraftHeaderValue(draft.Subject)
+	from := sanitizeDraftHeaderValue(c.username)
+	mode := strings.ToLower(strings.TrimSpace(draft.Mode))
+	contentType := "text/plain; charset=UTF-8"
+	if mode == "html" {
+		contentType = "text/html; charset=UTF-8"
+	}
+
+	message := strings.Builder{}
+	message.WriteString("From: " + from + "\r\n")
+	message.WriteString("To: " + strings.Join(draft.To, ", ") + "\r\n")
+	if len(draft.CC) > 0 {
+		message.WriteString("Cc: " + strings.Join(draft.CC, ", ") + "\r\n")
+	}
+	if len(draft.BCC) > 0 {
+		message.WriteString("Bcc: " + strings.Join(draft.BCC, ", ") + "\r\n")
+	}
+	message.WriteString("Subject: " + subject + "\r\n")
+	message.WriteString("MIME-Version: 1.0\r\n")
+	message.WriteString("Content-Type: " + contentType + "\r\n")
+	message.WriteString("\r\n")
+	message.WriteString(draft.Body)
+
+	appendToFolder := func(folder string, flags []string) error {
+		if err := d.Append(folder, flags, time.Now(), []byte(message.String())); err == nil {
+			return nil
+		}
+		if err := d.CreateFolder(folder); err != nil {
+			return err
+		}
+		return d.Append(folder, flags, time.Now(), []byte(message.String()))
+	}
+
+	targets := []string{"Sent", "INBOX/Sent", "INBOX.Sent", "Sent Items", "INBOX/Sent Items", "INBOX.Sent Items"}
+	var lastErr error
+	for _, folder := range targets {
+		if err := appendToFolder(folder, []string{"\\Seen"}); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return fmt.Errorf("failed to save sent mail: %w", lastErr)
+	}
+	return errors.New("failed to save sent mail")
 }
 
 func (c *APIClient) ensureConnectedLocked() (*goimap.Dialer, error) {

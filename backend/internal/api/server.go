@@ -321,6 +321,20 @@ func deriveSMTPHost(imapHost string) string {
 	return host
 }
 
+func smtpSendWithTimeout(addr string, auth smtp.Auth, from string, recipients []string, msg []byte, timeout time.Duration) error {
+	result := make(chan error, 1)
+	go func() {
+		result <- smtp.SendMail(addr, auth, from, recipients, msg)
+	}()
+
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("smtp send timed out after %s", timeout)
+	}
+}
+
 func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -417,14 +431,34 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 	recipients := append([]string{}, toList...)
 	recipients = append(recipients, ccList...)
 	recipients = append(recipients, bccList...)
+	s.logger.Info("mail send requested", "smtpHost", smtpHost, "smtpPort", strconv.Itoa(smtpPort), "recipientCount", strconv.Itoa(len(recipients)))
 
 	auth := smtp.PlainAuth("", payload.Username, payload.Password, smtpHost)
-	if err := smtp.SendMail(addr, auth, from, recipients, msg.Bytes()); err != nil {
-		http.Error(w, "failed to send email", http.StatusBadGateway)
+	if err := smtpSendWithTimeout(addr, auth, from, recipients, msg.Bytes(), 20*time.Second); err != nil {
+		s.logger.Error("mail send failed", "smtpHost", smtpHost, "smtpPort", strconv.Itoa(smtpPort), "error", err.Error())
+		http.Error(w, fmt.Sprintf("failed to send email: %s", err.Error()), http.StatusBadGateway)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	warning := ""
+	sentSaved := true
+	if s.mail != nil {
+		if err := s.mail.SaveSent(r.Context(), imapadapter.DraftMessage{
+			To:      toList,
+			CC:      ccList,
+			BCC:     bccList,
+			Subject: req.Subject,
+			Body:    req.Body,
+			Mode:    req.Mode,
+		}); err != nil {
+			sentSaved = false
+			warning = "email sent but could not be saved to Sent folder"
+			s.logger.Error("mail sent but save-sent failed", "error", err.Error())
+		}
+	}
+	s.logger.Info("mail send completed", "sentSaved", strconv.FormatBool(sentSaved))
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sentSaved": sentSaved, "warning": warning})
 }
 
 func (s *Server) handleMailDraft(w http.ResponseWriter, r *http.Request) {
@@ -922,6 +956,42 @@ func (s *Server) handleInboxFolders(w http.ResponseWriter, r *http.Request) {
 			"name":   name,
 			"folder": folder,
 		})
+	case http.MethodPut:
+		var req struct {
+			Folder string `json:"folder"`
+			Name   string `json:"name"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		folder := strings.TrimSpace(req.Folder)
+		name := strings.TrimSpace(req.Name)
+		if folder == "" || name == "" {
+			http.Error(w, "folder and name are required", http.StatusBadRequest)
+			return
+		}
+		if isBuiltinMailbox(folder) {
+			http.Error(w, "built-in folders cannot be renamed", http.StatusBadRequest)
+			return
+		}
+		if mailboxParentPath(folder) == "" {
+			http.Error(w, "folder must have a parent mailbox", http.StatusBadRequest)
+			return
+		}
+
+		renamed, err := s.mail.RenameFolder(r.Context(), folder, name)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":      true,
+			"folder":  folder,
+			"renamed": renamed,
+			"parent":  mailboxParentPath(renamed),
+		})
 	case http.MethodDelete:
 		folder := strings.TrimSpace(r.URL.Query().Get("folder"))
 		if folder == "" {
@@ -961,9 +1031,10 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Action     string   `json:"action"`
-		MessageIDs []string `json:"messageIds"`
-		Mailbox    string   `json:"mailbox"`
+		Action        string   `json:"action"`
+		MessageIDs    []string `json:"messageIds"`
+		Mailbox       string   `json:"mailbox"`
+		TargetMailbox string   `json:"targetMailbox"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -972,10 +1043,15 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 
 	action := strings.ToLower(strings.TrimSpace(req.Action))
 	mailbox := strings.TrimSpace(req.Mailbox)
+	targetMailbox := strings.TrimSpace(req.TargetMailbox)
 	switch action {
-	case "delete", "archive", "spam", "read":
+	case "delete", "archive", "spam", "read", "move":
 	default:
 		http.Error(w, "unsupported action", http.StatusBadRequest)
+		return
+	}
+	if action == "move" && targetMailbox == "" {
+		http.Error(w, "targetMailbox is required for move action", http.StatusBadRequest)
 		return
 	}
 
@@ -1004,7 +1080,7 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 	failures := make([]inboxActionFailure, 0)
 	processed := 0
 	for _, messageID := range uniqueIDs {
-		if err := s.mail.ApplyInboxAction(r.Context(), messageID, action, mailbox); err != nil {
+		if err := s.mail.ApplyInboxAction(r.Context(), messageID, action, mailbox, targetMailbox); err != nil {
 			failures = append(failures, inboxActionFailure{MessageID: messageID, Error: err.Error()})
 			continue
 		}
@@ -1012,10 +1088,11 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":        len(failures) == 0,
-		"action":    action,
-		"processed": processed,
-		"failed":    failures,
+		"ok":            len(failures) == 0,
+		"action":        action,
+		"processed":     processed,
+		"failed":        failures,
+		"targetMailbox": targetMailbox,
 	})
 }
 

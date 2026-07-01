@@ -3,9 +3,23 @@
   --panel: #252530;
   --ink: #d4c5e2;
   --ink-strong: #e8ddf5;
-  --accent: #9bc400;
-  --accent-soft: #6b4a42;
+  --accent: #c29a72;
+  --accent-soft: #5a3f31;
   --line: #404050;
+  --glow: rgba(107, 74, 66, 0.25);
+  --sidebar-start: #1f1f24;
+  --sidebar-end: #2a2530;
+  --new-email-border: #8f6b4a;
+  --new-email-start: #c29a72;
+  --new-email-end: #9a7450;
+  --new-email-text: #24170f;
+  --button-text: #24170f;
+  --link-border: #d8dde6;
+  --accent-contrast: #24170f;
+  --chip-active-bg: rgba(255, 255, 255, 0.38);
+  --modal-overlay: rgba(124, 103, 127, 0.35);
+  --modal-shadow: rgba(128, 118, 163, 0.28);
+  --error-soft: rgba(249, 197, 189, 0.35);
   --mono: "IBM Plex Mono", monospace;
   --sans: "Space Grotesk", sans-serif;
 }
@@ -18,7 +32,7 @@ body {
   margin: 0;
   font-family: var(--sans);
   color: var(--ink);
-  background: radial-gradient(circle at top right, rgba(107, 74, 66, 0.25), transparent 45%), var(--bg);
+  background: radial-gradient(circle at top right, var(--glow), transparent 45%), var(--bg);
 }
 
 .shell {
@@ -30,16 +44,16 @@ body {
 .sidebar {
   border-right: 1px solid var(--line);
   padding: 20px;
-  background: linear-gradient(180deg, #1f1f24, #2a2530);
+  background: linear-gradient(180deg, var(--sidebar-start), var(--sidebar-end));
   display: flex;
   flex-direction: column;
 }
 
 .new-email-button {
   width: 100%;
-  border: 1px solid #78a100;
-  background: linear-gradient(180deg, #9bc400, #7ea100);
-  color: #1a2400;
+  border: 1px solid var(--new-email-border);
+  background: linear-gradient(180deg, var(--new-email-start), var(--new-email-end));
+  color: var(--new-email-text);
   border-radius: 10px;
   padding: 10px;
   font-weight: 700;
@@ -85,7 +99,7 @@ body {
 .sidebar a {
   text-decoration: none;
   color: var(--ink-strong);
-  border: 1px solid #d8dde6;
+  border: 1px solid var(--link-border);
   border-radius: 10px;
   padding: 10px;
   transition: all 180ms ease;
@@ -94,6 +108,21 @@ body {
 .sidebar a:hover {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+.inbox-nav-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.inbox-expand-button {
+  width: auto;
+  min-width: 42px;
+  padding: 0;
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 .sidebar .nav-heading {
@@ -136,6 +165,40 @@ body {
 
 .sidebar-folder-row a {
   min-width: 0;
+}
+
+.drop-target-active {
+  border-color: var(--accent) !important;
+  background: rgba(194, 154, 114, 0.22) !important;
+}
+
+.sidebar-folder-menu-wrap {
+  position: relative;
+}
+
+.sidebar-folder-menu-button {
+  width: auto;
+  min-width: 40px;
+  padding: 10px 8px;
+}
+
+.sidebar-folder-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  display: grid;
+  gap: 6px;
+  min-width: 110px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+  background: #1e1c23;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.sidebar-folder-menu button {
+  width: 100%;
 }
 
 .sidebar-folder-delete {
@@ -220,7 +283,7 @@ button {
   width: fit-content;
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: #2f3a00;
+  color: var(--button-text);
   border-radius: 8px;
   padding: 9px 14px;
   font: inherit;
@@ -245,7 +308,7 @@ pre {
 }
 
 .notice-success {
-  background: rgba(155, 196, 0, 0.15);
+  background: rgba(194, 154, 114, 0.18);
 }
 
 .notice-warning {
@@ -259,7 +322,7 @@ pre {
 .log-line { color: var(--ink); }
 .log-error { color: #ff8a80; }
 .log-warn  { color: #ffb74d; }
-.log-info  { color: #9bc400; opacity: 0.95; }
+.log-info  { color: #c29a72; opacity: 0.95; }
 .log-debug { color: #ce93d8; }
 
 .health-head {
@@ -311,8 +374,8 @@ pre {
 }
 
 .health-ok {
-  background: rgba(155, 196, 0, 0.16);
-  border-color: rgba(155, 196, 0, 0.35);
+  background: rgba(194, 154, 114, 0.2);
+  border-color: rgba(194, 154, 114, 0.4);
 }
 
 .health-bad {
@@ -369,10 +432,10 @@ pre {
 .compose-window {
   width: min(920px, 96vw);
   min-height: min(760px, 90vh);
-  background: #f7f7f2;
-  border: 1px solid #d8dde6;
+  background: #1f1f24;
+  border: 1px solid var(--line);
   border-radius: 14px;
-  color: #202124;
+  color: var(--ink-strong);
   padding: 16px;
   display: grid;
   grid-template-rows: auto auto auto 1fr;
@@ -384,35 +447,35 @@ pre {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  border-bottom: 1px solid #d8dde6;
+  border-bottom: 1px solid var(--line);
   padding-bottom: 10px;
 }
 
 .compose-send {
   background: var(--accent);
   border-color: var(--accent);
-  color: #1a2400;
+  color: #24170f;
   font-weight: 700;
 }
 
 .compose-save-draft {
-  background: #f0f5d7;
-  border-color: #9fb26a;
-  color: #2f3a00;
+  background: rgba(194, 154, 114, 0.24);
+  border-color: rgba(194, 154, 114, 0.5);
+  color: var(--ink-strong);
 }
 
 .compose-trash,
 .compose-close {
   background: transparent;
-  border-color: #c8d0db;
-  color: #3a4352;
+  border-color: var(--line);
+  color: var(--ink-strong);
 }
 
 .compose-form-grid {
   display: grid;
   gap: 8px;
-  background: #fff;
-  border: 1px solid #d8dde6;
+  background: #252530;
+  border: 1px solid var(--line);
   border-radius: 10px;
   padding: 12px;
 }
@@ -426,13 +489,13 @@ pre {
 
 .compose-field-row span {
   font-weight: 700;
-  color: #3a4352;
+  color: var(--ink-strong);
 }
 
 .compose-field-row input {
-  background: #fff;
-  color: #202124;
-  border: 1px solid #c8d0db;
+  background: #1a1a1e;
+  color: var(--ink-strong);
+  border: 1px solid var(--line);
 }
 
 .compose-mode-bar {
@@ -450,7 +513,7 @@ pre {
 .compose-mode-button.active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #1a2400;
+  color: #24170f;
   font-weight: 700;
 }
 
@@ -459,8 +522,8 @@ pre {
   min-height: min(420px, 52vh);
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
-  color: #202124;
+  background: #1a1a1e;
+  color: var(--ink-strong);
   padding: 12px;
   font: inherit;
   resize: vertical;
@@ -469,16 +532,16 @@ pre {
 .compose-editor-html {
   overflow: hidden;
   padding: 0;
-  background: #fff;
-  color: #202124;
+  background: #1a1a1e;
+  color: var(--ink-strong);
 }
 
 .compose-editor-html .ql-toolbar.ql-snow {
   border: 0;
-  border-bottom: 1px solid #d8dde6;
+  border-bottom: 1px solid var(--line);
   border-radius: 10px 10px 0 0;
-  background: #f0f5d7;
-  color: #2f3a00;
+  background: #2a2530;
+  color: var(--ink-strong);
 }
 
 .compose-editor-html .ql-container.ql-snow {
@@ -486,14 +549,14 @@ pre {
   min-height: min(360px, 46vh);
   font-family: var(--sans);
   font-size: 0.95rem;
-  background: #fff;
-  color: #202124;
+  background: #1a1a1e;
+  color: var(--ink-strong);
 }
 
 .compose-editor-html .ql-editor {
   min-height: min(360px, 46vh);
-  background: #fff;
-  color: #202124;
+  background: #1a1a1e;
+  color: var(--ink-strong);
 }
 
 .compose-editor-html .ql-toolbar button,
@@ -502,47 +565,47 @@ pre {
   width: auto;
   border: 0;
   background: transparent;
-  color: #2f3a00;
+  color: var(--ink-strong);
   padding: 3px 5px;
   border-radius: 0;
 }
 
 .compose-editor-html .ql-toolbar .ql-stroke {
-  stroke: #2f3a00;
+  stroke: var(--ink-strong);
 }
 
 .compose-editor-html .ql-toolbar .ql-fill {
-  fill: #2f3a00;
+  fill: var(--ink-strong);
 }
 
 .compose-editor-html .ql-toolbar .ql-picker {
-  color: #2f3a00;
+  color: var(--ink-strong);
 }
 
 .compose-editor-html .ql-picker-options {
-  background: #fff;
-  color: #202124;
-  border: 1px solid #d8dde6;
+  background: #252530;
+  color: var(--ink-strong);
+  border: 1px solid var(--line);
 }
 
 .compose-editor-html .ql-editor.ql-blank::before {
-  color: #6b7280;
+  color: rgba(232, 221, 245, 0.55);
   font-style: normal;
 }
 
 .compose-editor-html .ql-toolbar button.ql-active,
 .compose-editor-html .ql-toolbar .ql-picker-label.ql-active {
-  color: #5f7d00;
+  color: var(--accent);
 }
 
 .compose-editor-html .ql-toolbar button.ql-active .ql-stroke,
 .compose-editor-html .ql-toolbar .ql-picker-label.ql-active .ql-stroke {
-  stroke: #5f7d00;
+  stroke: var(--accent);
 }
 
 .compose-editor-html .ql-toolbar button.ql-active .ql-fill,
 .compose-editor-html .ql-toolbar .ql-picker-label.ql-active .ql-fill {
-  fill: #5f7d00;
+  fill: var(--accent);
 }
 
 @media (max-width: 900px) {

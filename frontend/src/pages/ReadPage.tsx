@@ -72,6 +72,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
   const [sortKey, setSortKey] = useState<SortKey>("time");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const isDraftMailbox = mailbox.toLowerCase().includes("drafts");
+  const sourceMailbox = mailbox || "INBOX";
 
   async function loadInbox() {
     setLoading(true);
@@ -113,6 +114,17 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
     loadInbox();
     const timer = setInterval(loadInbox, 15_000);
     return () => clearInterval(timer);
+  }, [mailbox]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleMailboxMove = () => {
+      void loadInbox();
+    };
+    window.addEventListener("mailbox-move-complete", handleMailboxMove as EventListener);
+    return () => {
+      window.removeEventListener("mailbox-move-complete", handleMailboxMove as EventListener);
+    };
   }, [mailbox]);
 
   const rows = useMemo(() => {
@@ -167,6 +179,14 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
   function sortLabel(column: SortKey, label: string): string {
     if (sortKey !== column) return label;
     return `${label} ${sortDirection === "asc" ? "↑" : "↓"}`;
+  }
+
+  function dragMessagePayload(item: InboxEmail): string {
+    const dragged = selectedMessageIds.includes(item.messageId) ? selectedMessageIds : [item.messageId];
+    return JSON.stringify({
+      messageIds: dragged,
+      mailbox: sourceMailbox
+    });
   }
 
   async function applyInboxAction(action: InboxAction, messageIds: string[], options?: { closeModal?: boolean }) {
@@ -347,7 +367,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
                 onClick={() => setActiveTab(tab)}
                 style={{
                   background: isActive ? "var(--accent)" : "transparent",
-                  color: isActive ? "#2f3a00" : "var(--ink-strong)",
+                  color: isActive ? "var(--accent-contrast)" : "var(--ink-strong)",
                   border: "1px solid var(--line)",
                   borderRadius: 999,
                   padding: "0.38rem 0.78rem",
@@ -364,7 +384,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
                     height: 18,
                     borderRadius: 999,
                     border: "1px solid var(--line)",
-                    background: isActive ? "rgba(255, 255, 255, 0.38)" : "var(--accent-soft)",
+                    background: isActive ? "var(--chip-active-bg)" : "var(--accent-soft)",
                     color: "var(--ink-strong)",
                     display: "inline-flex",
                     alignItems: "center",
@@ -431,7 +451,15 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
               {sortedRows.map((item) => {
                 const isRead = item.status === "read";
                 return (
-                <tr key={`${item.messageId}-${item.atUtc}`}>
+                <tr
+                  key={`${item.messageId}-${item.atUtc}`}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData("application/x-llama-mailbox", dragMessagePayload(item));
+                    event.dataTransfer.effectAllowed = "move";
+                  }}
+                  style={{ cursor: "grab" }}
+                >
                   <td style={{ borderBottom: "1px solid var(--line)", padding: "8px" }}>
                     <input
                       type="checkbox"
@@ -482,7 +510,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(124, 103, 127, 0.35)",
+            background: "var(--modal-overlay)",
             display: "grid",
             placeItems: "center",
             padding: 16,
@@ -497,7 +525,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
               border: "1px solid var(--line)",
               borderRadius: 14,
               padding: 16,
-              boxShadow: "0 14px 40px rgba(128, 118, 163, 0.28)"
+              boxShadow: "0 14px 40px var(--modal-shadow)"
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>

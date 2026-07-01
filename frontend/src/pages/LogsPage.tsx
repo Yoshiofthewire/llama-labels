@@ -103,7 +103,7 @@ function LogViewer({ filename }: { filename: string }) {
       </div>
 
       {error && (
-        <div style={{ color: "var(--ink-strong)", background: "rgba(249, 197, 189, 0.35)", border: "1px solid var(--line)", borderRadius: 4, padding: "0.5rem 0.75rem", marginBottom: "0.5rem", fontSize: "0.85rem" }}>
+        <div style={{ color: "var(--ink-strong)", background: "var(--error-soft)", border: "1px solid var(--line)", borderRadius: 4, padding: "0.5rem 0.75rem", marginBottom: "0.5rem", fontSize: "0.85rem" }}>
           {error}
         </div>
       )}

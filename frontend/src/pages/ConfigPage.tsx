@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { deleteJSON, getJSON, postJSON, putJSON } from "../api/client";
+import { applyTheme, getStoredTheme, THEME_OPTIONS, type ThemeName } from "../theme";
 
 type AppConfig = {
   timezone: string;
@@ -134,6 +135,7 @@ export function ConfigPage() {
   const [keywordMappingText, setKeywordMappingText] = useState("");
   const [labelsFromImap, setLabelsFromImap] = useState<string[]>([]);
   const [configStatus, setConfigStatus] = useState("");
+  const [selectedTheme, setSelectedTheme] = useState<ThemeName>("Current");
 
   const [imapStatus, setImapStatus] = useState<IMAPConfigStatus | null>(null);
   const [imapForm, setImapForm] = useState<IMAPForm>({
@@ -181,6 +183,7 @@ export function ConfigPage() {
     let cancelled = false;
 
     const load = async () => {
+      setSelectedTheme(getStoredTheme());
       try {
         const nextConfig = await getJSON<unknown>("/api/config");
         if (cancelled) {
@@ -236,6 +239,11 @@ export function ConfigPage() {
     } catch {
       setConfigStatus("Failed to save configuration.");
     }
+  }
+
+  function saveTheme() {
+    applyTheme(selectedTheme);
+    setConfigStatus(`Theme set to ${selectedTheme}.`);
   }
 
   function applyImapLabelsToAllowlist() {
@@ -364,6 +372,20 @@ export function ConfigPage() {
           onChange={(event) => updateConfig("rateLimits", { ...cfg.rateLimits, perHour: Number(event.target.value) || 0 })}
         />
       </label>
+      <label>
+        <div>Theme</div>
+        <select
+          value={selectedTheme}
+          onChange={(event) => setSelectedTheme(event.target.value as ThemeName)}
+        >
+          {THEME_OPTIONS.map((theme) => (
+            <option key={theme} value={theme}>
+              {theme}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="button" onClick={saveTheme}>Apply Theme</button>
       <button type="button" onClick={saveConfig}>Save Configuration</button>
 
       <hr />
