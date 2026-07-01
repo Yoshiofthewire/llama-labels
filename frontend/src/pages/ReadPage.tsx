@@ -133,44 +133,6 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
   const isDraftMailbox = mailbox.toLowerCase().includes("drafts");
   const sourceMailbox = mailbox || "INBOX";
 
-  const batchActions = [
-    {
-      key: "delete",
-      label: "Delete",
-      icon: "🗑",
-      onClick: () => applyInboxAction("delete", selectedMessageIds),
-      disabled: selectedMessageIds.length === 0 || actionLoading
-    },
-    {
-      key: "archive",
-      label: "Archive",
-      icon: "📥",
-      onClick: () => applyInboxAction("archive", selectedMessageIds),
-      disabled: selectedMessageIds.length === 0 || actionLoading
-    },
-    {
-      key: "spam",
-      label: "Spam",
-      icon: "⚠",
-      onClick: () => applyInboxAction("spam", selectedMessageIds),
-      disabled: selectedMessageIds.length === 0 || actionLoading
-    },
-    {
-      key: "read",
-      label: "Read",
-      icon: "✓",
-      onClick: () => applyInboxAction("read", selectedMessageIds),
-      disabled: selectedMessageIds.length === 0 || actionLoading
-    },
-    {
-      key: "print",
-      label: "Print",
-      icon: "🖨",
-      onClick: () => printEmails(selectedInTab),
-      disabled: selectedInTab.length === 0 || actionLoading
-    }
-  ] as const;
-
   async function loadInbox() {
     setLoading(true);
     setError("");
@@ -281,6 +243,44 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
     () => formatUpdatedLabel(lastLoadedAt, Date.now()),
     [clockTick, lastLoadedAt]
   );
+
+  const batchActions = [
+    {
+      key: "delete",
+      label: "Delete",
+      icon: "🗑",
+      onClick: () => applyInboxAction("delete", selectedMessageIds),
+      disabled: selectedMessageIds.length === 0 || actionLoading
+    },
+    {
+      key: "archive",
+      label: "Archive",
+      icon: "📥",
+      onClick: () => applyInboxAction("archive", selectedMessageIds),
+      disabled: selectedMessageIds.length === 0 || actionLoading
+    },
+    {
+      key: "spam",
+      label: "Spam",
+      icon: "⚠",
+      onClick: () => applyInboxAction("spam", selectedMessageIds),
+      disabled: selectedMessageIds.length === 0 || actionLoading
+    },
+    {
+      key: "read",
+      label: "Read",
+      icon: "✓",
+      onClick: () => applyInboxAction("read", selectedMessageIds),
+      disabled: selectedMessageIds.length === 0 || actionLoading
+    },
+    {
+      key: "print",
+      label: "Print",
+      icon: "🖨",
+      onClick: () => printEmails(selectedInTab),
+      disabled: selectedInTab.length === 0 || actionLoading
+    }
+  ] as const;
 
   useEffect(() => {
     setCurrentPage(1);
