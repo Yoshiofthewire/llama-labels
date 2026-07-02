@@ -2,7 +2,15 @@ package processor
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"fmt"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +23,8 @@ import (
 	"llama-lab/backend/internal/logging"
 	"llama-lab/backend/internal/redaction"
 	"llama-lab/backend/internal/state"
+
+	"github.com/SherClockHolmes/webpush-go"
 )
 
 type Poller struct {
@@ -246,7 +256,10 @@ func (p *Poller) handleMessage(ctx context.Context, msg imapadapter.Message) err
 			Status:    "skipped",
 			Detail:    "no known label returned",
 		})
-		return p.store.MarkProcessed(msg.ID)
+		if err := p.store.MarkProcessed(msg.ID); err != nil {
+			return err
+		}
+		return nil
 	}
 	keywords := keywordsForSelectedLabel(selected, cfg.Labels.KeywordMappings)
 	p.log.Info(
@@ -265,7 +278,7 @@ func (p *Poller) handleMessage(ctx context.Context, msg imapadapter.Message) err
 	if err := p.store.MarkProcessed(msg.ID); err != nil {
 		return err
 	}
-	return p.store.AddDecision(state.Decision{
+	if err := p.store.AddDecision(state.Decision{
 		MessageID: msg.ID,
 		Sender:    msg.Sender,
 		SentTo:    msg.SentTo,
@@ -273,7 +286,173 @@ func (p *Poller) handleMessage(ctx context.Context, msg imapadapter.Message) err
 		Label:     selected,
 		Status:    "applied",
 		Detail:    "label applied successfully",
+	}); err != nil {
+		return err
+	}
+	p.maybeSendPushNotification(msg, selected, keywords)
+	return nil
+}
+
+func (p *Poller) maybeSendPushNotification(msg imapadapter.Message, selectedLabel string, messageKeywords []string) {
+	cfg := p.currentConfig()
+	if !shouldSendNotification(cfg.Notifications, selectedLabel, messageKeywords) {
+		return
+	}
+
+	subs := p.store.ListNotificationSubscriptions()
+	if len(subs) == 0 {
+		return
+	}
+
+	privateKeyPath := strings.TrimSpace(cfg.Notifications.PrivateKeyPath)
+	publicKey := strings.TrimSpace(cfg.Notifications.PublicKey)
+	if privateKeyPath == "" || publicKey == "" {
+		p.log.Error("notifications enabled but vapid key material missing")
+		return
+	}
+
+	privateKey, err := loadVAPIDPrivateKey(privateKeyPath)
+	if err != nil {
+		p.log.Error("failed to load notification private key", "error", err.Error())
+		return
+	}
+
+	title := "New Email"
+	body := buildNotificationBody(msg)
+	payloadBytes, err := json.Marshal(map[string]any{
+		"title": title,
+		"body":  body,
+		"url":   "/read",
+		"tag":   fmt.Sprintf("llama-mail-email-%s", strings.TrimSpace(msg.ID)),
 	})
+	if err != nil {
+		p.log.Error("failed to marshal notification payload", "error", err.Error())
+		return
+	}
+
+	options := &webpush.Options{
+		Subscriber:      "mailto:noreply@localhost",
+		VAPIDPublicKey:  publicKey,
+		VAPIDPrivateKey: privateKey,
+		TTL:             300,
+	}
+
+	sent := 0
+	failed := 0
+	staleEndpoints := []string{}
+	for _, sub := range subs {
+		resp, err := webpush.SendNotification(payloadBytes, &webpush.Subscription{
+			Endpoint: sub.Endpoint,
+			Keys: webpush.Keys{
+				Auth:   sub.Auth,
+				P256dh: sub.P256DH,
+			},
+		}, options)
+		if err != nil {
+			failed++
+			continue
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusCreated {
+			sent++
+			continue
+		}
+		failed++
+		if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
+			staleEndpoints = append(staleEndpoints, sub.Endpoint)
+		}
+	}
+
+	removed := 0
+	for _, endpoint := range staleEndpoints {
+		ok, err := p.store.RemoveNotificationSubscription(endpoint)
+		if err == nil && ok {
+			removed++
+		}
+	}
+
+	p.log.Info(
+		"new-email push notification attempt",
+		"message_id", msg.ID,
+		"subscriptions", intToString(len(subs)),
+		"sent", intToString(sent),
+		"failed", intToString(failed),
+		"removed_stale", intToString(removed),
+	)
+}
+
+func shouldSendNotification(settings config.NotificationSettings, selectedLabel string, messageKeywords []string) bool {
+	mode := strings.ToLower(strings.TrimSpace(settings.Mode))
+	switch mode {
+	case "none", "":
+		return false
+	case "all":
+		return true
+	case "keywords":
+		selected := strings.TrimSpace(selectedLabel)
+		if selected != "" {
+			messageKeywords = append([]string{selected}, messageKeywords...)
+		}
+
+		enabled := map[string]bool{}
+		for _, keyword := range settings.Keywords {
+			clean := strings.ToLower(strings.TrimSpace(keyword))
+			if clean != "" {
+				enabled[clean] = true
+			}
+		}
+		if len(enabled) == 0 {
+			return false
+		}
+
+		for _, keyword := range messageKeywords {
+			key := strings.ToLower(strings.TrimSpace(keyword))
+			if key != "" && enabled[key] {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func buildNotificationBody(msg imapadapter.Message) string {
+	from := strings.TrimSpace(msg.Sender)
+	subject := strings.TrimSpace(msg.Subject)
+	if from == "" && subject == "" {
+		return "You have a new email."
+	}
+	if from == "" {
+		return fmt.Sprintf("Subject: %s", subject)
+	}
+	if subject == "" {
+		return fmt.Sprintf("From: %s", from)
+	}
+	return fmt.Sprintf("From %s: %s", from, subject)
+}
+
+func loadVAPIDPrivateKey(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	block, _ := pem.Decode(b)
+	if block == nil {
+		return "", errors.New("vapid pem block missing")
+	}
+	key, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil {
+		return "", err
+	}
+	return encodeVAPIDPrivateKey(key), nil
+}
+
+func encodeVAPIDPrivateKey(key *ecdsa.PrivateKey) string {
+	scalar := key.D.Bytes()
+	out := make([]byte, 32)
+	copy(out[32-len(scalar):], scalar)
+	return base64.RawURLEncoding.EncodeToString(out)
 }
 
 func classifyWithRetry(ctx context.Context, c llama.Client, labels []string, sender, subject, body string) (string, error) {

@@ -43,8 +43,9 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 4. POST to Ollama `/api/generate` with tuning prompt + redacted email text
 5. Fuzzy-match Ollama response against the label allowlist
 6. Apply matched label as an IMAP keyword
-7. Persist decision (messageId, sender, subject, label, status, timestamp)
-8. Advance checkpoint to next UID
+7. Send browser push notifications for new emails when `notifications.mode` is `all`, or when mode is `keywords` and selected IMAP keywords match config
+8. Persist decision (messageId, sender, subject, label, status, timestamp)
+9. Advance checkpoint to next UID
 
 ### API Contract (consumed by frontend)
 

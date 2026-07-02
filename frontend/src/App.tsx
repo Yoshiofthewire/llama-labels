@@ -700,7 +700,7 @@ export function App() {
             aria-expanded={settingsOpen}
             onClick={() => setSettingsOpen((open) => !open)}
           >
-            Workspace {settingsOpen ? "-" : "+"}
+            Settings {settingsOpen ? "-" : "+"}
           </button>
 
           {settingsOpen ? (
