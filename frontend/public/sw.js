@@ -1,3 +1,44 @@
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    (async () => {
+      const keyResponse = await fetch("/api/notifications/vapid-public-key", { credentials: "include" });
+      if (!keyResponse.ok) {
+        throw new Error("failed to load vapid public key");
+      }
+
+      const keyData = await keyResponse.json();
+      const publicKey = typeof keyData.publicKey === "string" ? keyData.publicKey : "";
+      if (!publicKey) {
+        throw new Error("missing vapid public key");
+      }
+
+      const normalized = publicKey.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+      const raw = atob(padded);
+      const applicationServerKey = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i += 1) {
+        applicationServerKey[i] = raw.charCodeAt(i);
+      }
+
+      const subscription = await self.registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey
+      });
+
+      const response = await fetch("/api/notifications/subscriptions", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(subscription.toJSON())
+      });
+
+      if (!response.ok) {
+        throw new Error(`subscription refresh failed with status ${response.status}`);
+      }
+    })()
+  );
+});
+
 self.addEventListener("push", (event) => {
   let payload = {};
   if (event.data) {

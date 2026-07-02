@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
@@ -77,7 +76,7 @@ func Run(args []string) error {
 	case "server":
 		return runServer(cfg, logger, store, healthSvc)
 	case "all":
-		return runAll(cfg, logger, store, healthSvc)
+		return runAll(cfg, paths.ConfigFile, logger, store, healthSvc)
 	default:
 		return errors.New("invalid mode; expected daemon, server, or all")
 	}
@@ -89,8 +88,8 @@ func runDaemon(cfg config.Config, configPath string, logger *logging.Logger, sto
 	if err != nil {
 		return err
 	}
+	poller.SetConfigPath(configPath)
 	warmupLlamaOnStartup(logger, llamaClient, poller)
-	go watchConfigForDaemon(configPath, cfg, poller, logger)
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	go poller.Run()
@@ -101,32 +100,12 @@ func runDaemon(cfg config.Config, configPath string, logger *logging.Logger, sto
 	return nil
 }
 
-func watchConfigForDaemon(configPath string, initial config.Config, poller interface{ UpdateConfig(config.Config) }, logger *logging.Logger) {
-	current := initial
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		next, err := config.Load(configPath)
-		if err != nil {
-			logger.Error("daemon config reload failed", "error", err.Error())
-			continue
-		}
-		if reflect.DeepEqual(current, next) {
-			continue
-		}
-		current = next
-		poller.UpdateConfig(next)
-		logger.Info("daemon config reloaded from disk")
-	}
-}
-
 func runServer(cfg config.Config, logger *logging.Logger, store *state.Store, healthSvc *health.Service) error {
 	srv := api.NewServer(cfg, logger, store, healthSvc, newMailClient(), nil)
 	return srv.Run()
 }
 
-func runAll(cfg config.Config, logger *logging.Logger, store *state.Store, healthSvc *health.Service) error {
+func runAll(cfg config.Config, configPath string, logger *logging.Logger, store *state.Store, healthSvc *health.Service) error {
 	// Restore the sticky AI-credits flag onto the health status so a restart
 	// keeps surfacing it until a successful classify clears it.
 	if exhausted, at := store.AICreditsExhausted(); exhausted {
@@ -138,6 +117,7 @@ func runAll(cfg config.Config, logger *logging.Logger, store *state.Store, healt
 	if err != nil {
 		return err
 	}
+	poller.SetConfigPath(configPath)
 	srv := api.NewServer(cfg, logger, store, healthSvc, mailClient, poller.UpdateConfig)
 	warmupLlamaOnStartup(logger, llamaClient, poller)
 
@@ -156,13 +136,6 @@ func runAll(cfg config.Config, logger *logging.Logger, store *state.Store, healt
 	return nil
 }
 
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
 func envDurationSeconds(name string, fallback int) int {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -173,6 +146,13 @@ func envDurationSeconds(name string, fallback int) int {
 		return fallback
 	}
 	return v
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func monitorHealth(logger *logging.Logger, healthSvc *health.Service) {

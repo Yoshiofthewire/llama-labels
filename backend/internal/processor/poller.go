@@ -30,6 +30,7 @@ import (
 type Poller struct {
 	cfg       config.Config
 	cfgMu     sync.RWMutex
+	cfgPath   string
 	log       *logging.Logger
 	store     *state.Store
 	health    *health.Service
@@ -51,6 +52,12 @@ func New(cfg config.Config, log *logging.Logger, store *state.Store, healthSvc *
 	p.tickSem = make(chan struct{}, 1)
 	p.tickSem <- struct{}{}
 	return p, nil
+}
+
+func (p *Poller) SetConfigPath(path string) {
+	p.cfgMu.Lock()
+	p.cfgPath = strings.TrimSpace(path)
+	p.cfgMu.Unlock()
 }
 
 func (p *Poller) Run() {
@@ -106,6 +113,8 @@ func (p *Poller) currentConfig() config.Config {
 }
 
 func (p *Poller) tick() {
+	p.reloadConfigIfNeeded()
+
 	// acquire semaphore; if another tick is running, log that we're waiting
 	select {
 	case <-p.tickSem:
@@ -184,6 +193,21 @@ func (p *Poller) tick() {
 	)
 	p.log.Info("poll tick completed")
 	p.health.MarkHealthy()
+}
+
+func (p *Poller) reloadConfigIfNeeded() {
+	p.cfgMu.RLock()
+	path := p.cfgPath
+	p.cfgMu.RUnlock()
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	next, err := config.Load(path)
+	if err != nil {
+		p.log.Error("failed to reload config for poll tick", "error", err.Error())
+		return
+	}
+	p.UpdateConfig(next)
 }
 
 // recentDecisionsContext returns a short summary of the last N applied decisions to give Llama labelling context.

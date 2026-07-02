@@ -16,7 +16,7 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 - All pages live under `src/pages/`; routing is defined in `App.tsx`
 - Session cookie (`credentials: 'include'`) is required on every API call — this is handled by `client.ts`
 - Compose window is owned by `App.tsx`; it always uses Quill WYSIWYG and sends via `POST /api/mail/send` (window auto-closes after successful SMTP send, including success-with-warning responses) and its surface colors follow the active theme tokens
-- Push notifications use `public/sw.js`; `main.tsx` registers the service worker on page load so the Notifications page can subscribe devices and receive push events
+- Push notifications use `public/sw.js`; `main.tsx` registers the service worker on page load so the Notifications page can subscribe devices and receive push events. The service worker also refreshes push subscriptions when the browser expires them.
 
 ### Page → API Mapping
 
