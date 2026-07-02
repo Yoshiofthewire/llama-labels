@@ -459,25 +459,33 @@ body {
   background: color-mix(in srgb, #ffcc1f 30%, transparent);
 }
 
-.inbox-swipe-notice {
-  margin: 8px 10px 0;
-  border-radius: 10px;
-  padding: 6px 10px;
-  font-size: 0.78rem;
-  font-weight: 600;
+.inbox-row-swipe-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 74px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-bottom: 6px;
   border: 1px solid transparent;
 }
 
-.inbox-swipe-notice.delete {
-  background: rgba(255, 86, 86, 0.22);
-  border-color: rgba(255, 86, 86, 0.48);
+.inbox-row-swipe-label.delete {
+  background: rgba(255, 86, 86, 0.2);
+  border-color: rgba(255, 86, 86, 0.45);
   color: #ffdede;
 }
 
-.inbox-swipe-notice.archive {
+.inbox-row-swipe-label.archive {
   background: rgba(255, 210, 74, 0.24);
   border-color: rgba(255, 210, 74, 0.45);
   color: #2f2400;
+}
+
+.inbox-row-swipe-label.armed {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .inbox-body-refill-0 .inbox-row,
@@ -1590,10 +1598,11 @@ pre {
     font-size: 0.72rem;
   }
 
-  .inbox-swipe-notice {
-    margin: 6px 8px 0;
-    font-size: 0.74rem;
-    padding: 5px 8px;
+  .inbox-row-swipe-label {
+    min-width: 68px;
+    padding: 2px 7px;
+    font-size: 0.68rem;
+    margin-bottom: 5px;
   }
 
   .email-reader-backdrop {

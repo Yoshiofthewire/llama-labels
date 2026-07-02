@@ -146,7 +146,6 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
   const [clockTick, setClockTick] = useState(0);
   const [swipeRows, setSwipeRows] = useState<Record<string, SwipeRowState>>({});
   const [swipeRemovedIds, setSwipeRemovedIds] = useState<string[]>([]);
-  const [swipeNotice, setSwipeNotice] = useState<{ tone: SwipeTone; armed: boolean } | null>(null);
   const [swipeHapticsEnabled, setSwipeHapticsEnabled] = useState<boolean>(() => {
     if (typeof window === "undefined") {
       return true;
@@ -242,7 +241,6 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
       });
       setSwipeRows({});
       setSwipeRemovedIds([]);
-      setSwipeNotice(null);
       setSelectedMessageIds((current) => {
         if (current.length === 0) return current;
         const nextIDSet = new Set<string>();
@@ -479,11 +477,6 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
         armed
       }
     }));
-    if (showHint) {
-      setSwipeNotice({ tone, armed });
-    } else {
-      setSwipeNotice(null);
-    }
   }
 
   function clearSwipeRow(messageId: string) {
@@ -586,7 +579,6 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
     }
 
     const state = swipeLiveRef.current[session.messageId];
-    setSwipeNotice(null);
 
     if (!state || !session.shouldSwipe) {
       return;
@@ -829,17 +821,6 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
             </div>
           ) : null}
           <div className="inbox-table-wrap">
-            {swipeNotice ? (
-              <div className={`inbox-swipe-notice ${swipeNotice.tone === "delete" ? "delete" : "archive"}`} role="status" aria-live="polite">
-                {swipeNotice.armed
-                  ? swipeNotice.tone === "delete"
-                    ? "Release to delete"
-                    : "Release to archive"
-                  : swipeNotice.tone === "delete"
-                    ? "Delete ready at 50%"
-                    : "Archive ready at 50%"}
-              </div>
-            ) : null}
             <div className="inbox-table-scroll">
               <table className="inbox-table">
                 <thead>
@@ -929,6 +910,14 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
                         />
                       </td>
                       <td className="inbox-cell">
+                        {swipeState?.showHint ? (
+                          <span
+                            className={`inbox-row-swipe-label ${swipeState.tone === "delete" ? "delete" : "archive"} ${swipeState.armed ? "armed" : ""}`}
+                            aria-live="polite"
+                          >
+                            {swipeState.tone === "delete" ? "Delete" : "Archive"}
+                          </span>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => {
