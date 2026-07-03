@@ -13,6 +13,10 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
      # OLLAMA_MODEL: ${OLLAMA_MODEL:-nemotron-3-nano:4b}
       TUNING_FILE: ${TUNING_FILE:-/llama_lab/config/TUNING.md}
+      NOVU_SECRET_KEY: ${NOVU_SECRET_KEY:-}
+      NOVU_WORKFLOW_ID: ${NOVU_WORKFLOW_ID:-}
+      NOVU_APPLICATION_IDENTIFIER: ${NOVU_APPLICATION_IDENTIFIER:-}
+      NOVU_API_BASE: ${NOVU_API_BASE:-https://api.novu.co}
     dns:
       - 8.8.8.8
       - 8.8.4.4

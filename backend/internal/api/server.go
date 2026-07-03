@@ -7,11 +7,14 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdsa"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -21,6 +24,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/smtp"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -59,6 +63,9 @@ type Server struct {
 	imapConfigKeyPath string
 	mail              imapadapter.Client
 	sessions          map[string]time.Time
+	novuSecretKey     string
+	novuAPIBase       string
+	novuAppIdentifier string
 }
 
 func NewServer(cfg config.Config, logger *logging.Logger, store *state.Store, healthSvc *health.Service, mailClient imapadapter.Client, onConfigUpdated func(config.Config)) *Server {
@@ -68,7 +75,25 @@ func NewServer(cfg config.Config, logger *logging.Logger, store *state.Store, he
 	tuningPath := resolveTuningPath()
 	imapConfigPath := envOrDefault("IMAP_CONFIG_FILE", "/llama_lab/private/imap-config.json")
 	imapConfigKeyPath := envOrDefault("IMAP_CONFIG_KEY_FILE", "/llama_lab/private/imap-config.key")
-	return &Server{cfg: cfg, onConfigUpdated: onConfigUpdated, logger: logger, store: store, health: healthSvc, configPath: configPath, logPath: logPath, adminPath: adminPath, tuningPath: tuningPath, imapConfigPath: imapConfigPath, imapConfigKeyPath: imapConfigKeyPath, mail: mailClient, sessions: map[string]time.Time{}}
+	novuBase := strings.TrimRight(strings.TrimSpace(envOrDefault("NOVU_API_BASE", "https://api.novu.co")), "/")
+	return &Server{
+		cfg:               cfg,
+		onConfigUpdated:   onConfigUpdated,
+		logger:            logger,
+		store:             store,
+		health:            healthSvc,
+		configPath:        configPath,
+		logPath:           logPath,
+		adminPath:         adminPath,
+		tuningPath:        tuningPath,
+		imapConfigPath:    imapConfigPath,
+		imapConfigKeyPath: imapConfigKeyPath,
+		mail:              mailClient,
+		sessions:          map[string]time.Time{},
+		novuSecretKey:     strings.TrimSpace(os.Getenv("NOVU_SECRET_KEY")),
+		novuAPIBase:       novuBase,
+		novuAppIdentifier: strings.TrimSpace(os.Getenv("NOVU_APPLICATION_IDENTIFIER")),
+	}
 }
 
 func (s *Server) Run() error {
@@ -105,6 +130,8 @@ func (s *Server) Run() error {
 	mux.HandleFunc("POST /api/notifications/subscriptions", s.withAuth(s.handleNotificationSubscriptions))
 	mux.HandleFunc("DELETE /api/notifications/subscriptions", s.withAuth(s.handleNotificationSubscriptions))
 	mux.HandleFunc("POST /api/notifications/test", s.withAuth(s.handleNotificationTest))
+	mux.HandleFunc("GET /api/notifications/novu", s.withAuth(s.handleNotificationNovu))
+	mux.HandleFunc("POST /api/notifications/novu/unpair", s.withAuth(s.handleNotificationNovuUnpair))
 	mux.HandleFunc("GET /api/setup", s.handleSetup)
 	mux.HandleFunc("/", s.handleFrontend)
 
@@ -910,6 +937,68 @@ func (s *Server) handleNotificationTest(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (s *Server) handleNotificationNovu(w http.ResponseWriter, r *http.Request) {
+	subscriberID, err := s.store.GetOrCreateSubscriberID()
+	if err != nil {
+		http.Error(w, "failed to load subscriber id", http.StatusInternalServerError)
+		return
+	}
+	configured := s.novuSecretKey != "" && s.novuAppIdentifier != ""
+	resp := map[string]any{
+		"applicationIdentifier": s.novuAppIdentifier,
+		"subscriberId":          subscriberID,
+		"apiBase":               s.novuAPIBase,
+		"configured":            configured,
+	}
+	if configured {
+		resp["subscriberHash"] = s.novuSubscriberHash(subscriberID)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleNotificationNovuUnpair(w http.ResponseWriter, r *http.Request) {
+	if s.novuSecretKey == "" {
+		http.Error(w, "novu is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	subscriberID, err := s.store.GetOrCreateSubscriberID()
+	if err != nil {
+		http.Error(w, "failed to load subscriber id", http.StatusInternalServerError)
+		return
+	}
+	if err := s.deleteNovuDeviceCredentials(r.Context(), subscriberID); err != nil {
+		s.logger.Error("failed to remove novu device credentials", "error", err.Error())
+		http.Error(w, "failed to revoke paired devices", http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) novuSubscriberHash(subscriberID string) string {
+	mac := hmac.New(sha256.New, []byte(s.novuSecretKey))
+	mac.Write([]byte(subscriberID))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Server) deleteNovuDeviceCredentials(ctx context.Context, subscriberID string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, s.novuAPIBase+"/v1/subscribers/"+url.PathEscape(strings.TrimSpace(subscriberID))+"/credentials/fcm", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "ApiKey "+s.novuSecretKey)
+
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("novu delete credentials status=%d response=%s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
+}
+
 func loadVAPIDPrivateKey(path string) (string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -1492,15 +1581,17 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
 		return
 	}
+	subscriberID, _ := s.store.GetOrCreateSubscriberID()
 	admin, err := readAdminEnv(s.adminPath)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"authenticated": true})
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "subscriberId": subscriberID})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated":      true,
 		"username":           admin["ADMIN_USER"],
 		"mustChangePassword": strings.EqualFold(admin["MUST_CHANGE_PASSWORD"], "true"),
+		"subscriberId":       subscriberID,
 	})
 }
 

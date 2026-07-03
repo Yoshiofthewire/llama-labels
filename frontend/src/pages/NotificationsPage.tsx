@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import QRCode from "qrcode";
 import { deleteJSON, getJSON, postJSON, putJSON, toErrorMessage } from "../api/client";
 import { normalizeConfig, uniqueLabels, type AppConfig } from "../api/config";
 
@@ -20,6 +21,14 @@ type NotificationTestResponse = {
   activeSubscriptions?: number;
 };
 
+type NovuStatusResponse = {
+  applicationIdentifier: string;
+  subscriberId: string;
+  apiBase: string;
+  subscriberHash?: string;
+  configured: boolean;
+};
+
 function collectNotificationKeywordOptions(cfg: AppConfig, labelsData: LabelsResponse): string[] {
   const configured = cfg.labels.allowlist ?? [];
   const mapped = Object.values(cfg.labels.keywordMappings ?? {}).flat();
@@ -28,12 +37,28 @@ function collectNotificationKeywordOptions(cfg: AppConfig, labelsData: LabelsRes
   return uniqueLabels([...configured, ...mapped, ...imap, ...selected]);
 }
 
+function buildNovuPairingLink(novu: NovuStatusResponse): string {
+  const params = new URLSearchParams();
+  params.set("app", novu.applicationIdentifier);
+  params.set("sub", novu.subscriberId);
+  if (novu.subscriberHash) {
+    params.set("hash", novu.subscriberHash);
+  }
+  if (novu.apiBase) {
+    params.set("api", novu.apiBase);
+  }
+  return `llamalabels://novu-pair?${params.toString()}`;
+}
+
 export function NotificationsPage() {
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [availableKeywords, setAvailableKeywords] = useState<string[]>([]);
   const [status, setStatus] = useState("");
   const [testBusy, setTestBusy] = useState(false);
   const [unsubscribeBusy, setUnsubscribeBusy] = useState(false);
+  const [novuStatus, setNovuStatus] = useState<NovuStatusResponse | null>(null);
+  const [novuQrDataUrl, setNovuQrDataUrl] = useState("");
+  const [unpairBusy, setUnpairBusy] = useState(false);
 
   const statusTone = status.toLowerCase().includes("failed") ? "notice notice-error" : "notice notice-success";
 
@@ -52,6 +77,16 @@ export function NotificationsPage() {
         const normalized = normalizeConfig(nextConfig);
         setCfg(normalized);
         setAvailableKeywords(collectNotificationKeywordOptions(normalized, labelsData));
+        try {
+          const status = await getJSON<NovuStatusResponse>("/api/notifications/novu");
+          if (!cancelled) {
+            setNovuStatus(status);
+          }
+        } catch {
+          if (!cancelled) {
+            setNovuStatus(null);
+          }
+        }
       } catch {
         if (!cancelled) {
           setStatus("Failed to load notification settings.");
@@ -64,6 +99,28 @@ export function NotificationsPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!novuStatus?.configured || !novuStatus.applicationIdentifier || !novuStatus.subscriberId) {
+      setNovuQrDataUrl("");
+      return;
+    }
+    QRCode.toDataURL(buildNovuPairingLink(novuStatus), { errorCorrectionLevel: "M", margin: 2, width: 220 })
+      .then((dataUrl) => {
+        if (!cancelled) {
+          setNovuQrDataUrl(dataUrl);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNovuQrDataUrl("");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [novuStatus]);
 
   async function save() {
     if (!cfg) {
@@ -175,6 +232,28 @@ export function NotificationsPage() {
     }
   }
 
+  async function refreshNovuStatus() {
+    try {
+      const next = await getJSON<NovuStatusResponse>("/api/notifications/novu");
+      setNovuStatus(next);
+    } catch {
+      setNovuStatus(null);
+    }
+  }
+
+  async function revokePairedDevices() {
+    setUnpairBusy(true);
+    try {
+      await postJSON<{ ok: boolean }>("/api/notifications/novu/unpair", {});
+      setStatus("Revoked paired Android devices.");
+    } catch (error: unknown) {
+      const detail = toErrorMessage(error, "unknown error");
+      setStatus(`Failed to revoke paired devices: ${detail}`);
+    } finally {
+      setUnpairBusy(false);
+    }
+  }
+
   function setMode(mode: AppConfig["notifications"]["mode"]) {
     setCfg((prev) => {
       if (!prev) {
@@ -263,6 +342,49 @@ export function NotificationsPage() {
               <span className="notifications-mode-copy">Notify only for selected keywords.</span>
             </label>
           </div>
+        </section>
+
+        <section className="notifications-card notifications-android-card">
+          <div className="notifications-android-head">
+            <div>
+              <h3>Android App Pairing</h3>
+              <p className="notifications-muted">Scan this QR code from the Llama Labels Android app to receive push notifications for keyword-labeled email.</p>
+            </div>
+            <button type="button" className="notifications-ghost" onClick={() => void refreshNovuStatus()}>
+              Refresh
+            </button>
+          </div>
+
+          {!novuStatus?.configured ? (
+            <p className="notifications-empty">Novu is not configured on the server yet. Set NOVU_SECRET_KEY, NOVU_WORKFLOW_ID and NOVU_APPLICATION_IDENTIFIER first.</p>
+          ) : (
+            <>
+              {novuQrDataUrl ? (
+                <div className="notifications-qr">
+                  <img className="notifications-qr-image" src={novuQrDataUrl} alt="Android pairing QR code" width={220} height={220} />
+                  <p className="notifications-qr-hint">Open the Android app, choose Pair Device, and scan this code. The code carries only your Novu app identifier and subscriber id.</p>
+                </div>
+              ) : (
+                <p className="notifications-empty">Preparing pairing code…</p>
+              )}
+
+              <div className="notifications-android-meta">
+                <span>Subscriber ID</span>
+                <strong>{novuStatus.subscriberId || "Not available"}</strong>
+              </div>
+
+              <div className="notifications-android-tools">
+                <button type="button" className="notifications-ghost" onClick={() => void revokePairedDevices()} disabled={unpairBusy}>
+                  {unpairBusy ? "Revoking..." : "Revoke Paired Devices"}
+                </button>
+              </div>
+
+              <div className="notifications-store-links">
+                <span className="notifications-store-disabled" title="Store link coming soon">Google Play (coming soon)</span>
+                <span className="notifications-store-disabled" title="Store link coming soon">App Store (coming soon)</span>
+              </div>
+            </>
+          )}
         </section>
 
         <section className="notifications-card notifications-keywords-card">

@@ -1,6 +1,7 @@
 package processor
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
@@ -9,6 +10,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -41,14 +43,27 @@ type Poller struct {
 	mu        sync.Mutex
 	tickSem   chan struct{}
 	processed []time.Time
+	novu      NovuConfig
 }
 
-func New(cfg config.Config, log *logging.Logger, store *state.Store, healthSvc *health.Service, mailClient imapadapter.Client, llamaClient llama.Client) (*Poller, error) {
+type NovuConfig struct {
+	SecretKey  string
+	WorkflowID string
+	APIBase    string
+}
+
+func New(cfg config.Config, log *logging.Logger, store *state.Store, healthSvc *health.Service, mailClient imapadapter.Client, llamaClient llama.Client, novuCfg NovuConfig) (*Poller, error) {
 	re, err := redaction.New(cfg.Redaction.Patterns)
 	if err != nil {
 		return nil, err
 	}
-	p := &Poller{cfg: cfg, log: log, store: store, health: healthSvc, mail: mailClient, llama: llamaClient, redaction: re, processed: []time.Time{}}
+	novuCfg.SecretKey = strings.TrimSpace(novuCfg.SecretKey)
+	novuCfg.WorkflowID = strings.TrimSpace(novuCfg.WorkflowID)
+	novuCfg.APIBase = strings.TrimRight(strings.TrimSpace(novuCfg.APIBase), "/")
+	if novuCfg.APIBase == "" {
+		novuCfg.APIBase = "https://api.novu.co"
+	}
+	p := &Poller{cfg: cfg, log: log, store: store, health: healthSvc, mail: mailClient, llama: llamaClient, redaction: re, processed: []time.Time{}, novu: novuCfg}
 	p.tickSem = make(chan struct{}, 1)
 	p.tickSem <- struct{}{}
 	return p, nil
@@ -172,6 +187,7 @@ func (p *Poller) tick() {
 			// Retire the message so it is not retried on the next tick.
 			_ = p.store.MarkProcessed(msg.ID)
 			p.maybeSendPushNotification(msg, "", nil)
+			p.maybeTriggerNovu(msg, "", nil)
 			continue
 		}
 		processedCount++
@@ -285,6 +301,7 @@ func (p *Poller) handleMessage(ctx context.Context, msg imapadapter.Message) err
 			return err
 		}
 		p.maybeSendPushNotification(msg, "", nil)
+		p.maybeTriggerNovu(msg, "", nil)
 		return nil
 	}
 	keywords := keywordsForSelectedLabel(selected, cfg.Labels.KeywordMappings)
@@ -316,7 +333,80 @@ func (p *Poller) handleMessage(ctx context.Context, msg imapadapter.Message) err
 		return err
 	}
 	p.maybeSendPushNotification(msg, selected, keywords)
+	p.maybeTriggerNovu(msg, selected, keywords)
 	return nil
+}
+
+func (p *Poller) maybeTriggerNovu(msg imapadapter.Message, selectedLabel string, messageKeywords []string) {
+	cfg := p.currentConfig()
+	if !shouldSendNotification(cfg.Notifications, selectedLabel, messageKeywords) {
+		return
+	}
+	if p.novu.SecretKey == "" || p.novu.WorkflowID == "" {
+		return
+	}
+
+	subscriberID, err := p.store.GetOrCreateSubscriberID()
+	if err != nil {
+		p.log.Error("novu trigger skipped", "message_id", msg.ID, "reason", "subscriber id unavailable", "error", err.Error())
+		return
+	}
+
+	payload := map[string]any{
+		"name":          p.novu.WorkflowID,
+		"to":            subscriberID,
+		"transactionId": strings.TrimSpace(msg.ID),
+		"payload": map[string]any{
+			"messageId": strings.TrimSpace(msg.ID),
+			"sender":    strings.TrimSpace(msg.Sender),
+			"subject":   strings.TrimSpace(msg.Subject),
+			"label":     strings.TrimSpace(selectedLabel),
+			"keywords":  messageKeywords,
+			"url":       "/read",
+		},
+		"overrides": map[string]any{
+			"fcm": map[string]any{
+				"data": map[string]any{
+					"messageId": strings.TrimSpace(msg.ID),
+					"sender":    strings.TrimSpace(msg.Sender),
+					"subject":   strings.TrimSpace(msg.Subject),
+					"label":     strings.TrimSpace(selectedLabel),
+					"keywords":  strings.Join(messageKeywords, ","),
+					"url":       "/read",
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		p.log.Error("novu trigger skipped", "message_id", msg.ID, "reason", "marshal failed", "error", err.Error())
+		return
+	}
+
+	req, err := http.NewRequest(http.MethodPost, p.novu.APIBase+"/v1/events/trigger", bytes.NewReader(body))
+	if err != nil {
+		p.log.Error("novu trigger failed", "message_id", msg.ID, "error", err.Error())
+		return
+	}
+	req.Header.Set("Authorization", "ApiKey "+p.novu.SecretKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", strings.TrimSpace(msg.ID))
+
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		p.log.Error("novu trigger failed", "message_id", msg.ID, "error", err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		p.log.Error("novu trigger failed", "message_id", msg.ID, "status", strconv.Itoa(resp.StatusCode), "response", strings.TrimSpace(string(bodyBytes)))
+		return
+	}
+
+	p.log.Info("novu trigger sent", "message_id", msg.ID, "subscriber_id", subscriberID)
 }
 
 func (p *Poller) maybeSendPushNotification(msg imapadapter.Message, selectedLabel string, messageKeywords []string) {

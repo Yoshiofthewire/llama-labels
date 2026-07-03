@@ -1,6 +1,7 @@
 package state
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ type Store struct {
 	decisions          []Decision
 	notifications      []NotificationSubscription
 	notificationsDirty bool
+	subscriberID       string
 
 	aiCreditsExhausted   bool
 	aiCreditsExhaustedAt string
@@ -48,6 +50,7 @@ type stateFile struct {
 	LastCheckpoint       string                     `json:"lastCheckpoint"`
 	Processed            map[string]string          `json:"processed"`
 	Notifications        []NotificationSubscription `json:"notifications,omitempty"`
+	SubscriberID         string                     `json:"subscriberId,omitempty"`
 	AICreditsExhausted   bool                       `json:"aiCreditsExhausted,omitempty"`
 	AICreditsExhaustedAt string                     `json:"aiCreditsExhaustedAt,omitempty"`
 }
@@ -94,6 +97,7 @@ func (s *Store) applyStateFile(sf stateFile) {
 	s.checkpoint = sf.LastCheckpoint
 	s.aiCreditsExhausted = sf.AICreditsExhausted
 	s.aiCreditsExhaustedAt = sf.AICreditsExhaustedAt
+	s.subscriberID = strings.TrimSpace(sf.SubscriberID)
 	s.notifications = append([]NotificationSubscription{}, sf.Notifications...)
 	s.notificationsDirty = false
 
@@ -195,6 +199,28 @@ func (s *Store) Checkpoint() string {
 	return s.checkpoint
 }
 
+func (s *Store) GetOrCreateSubscriberID() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.refreshStateFromDiskLocked(); err != nil {
+		return "", err
+	}
+	if s.subscriberID != "" {
+		return s.subscriberID, nil
+	}
+
+	id, err := newUUIDv4()
+	if err != nil {
+		return "", err
+	}
+	s.subscriberID = id
+	if err := s.persistLocked(); err != nil {
+		return "", err
+	}
+	return s.subscriberID, nil
+}
+
 func (s *Store) AddDecision(d Decision) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -249,6 +275,7 @@ func (s *Store) persistLocked() error {
 		LastCheckpoint:       s.checkpoint,
 		Processed:            processed,
 		Notifications:        s.notifications,
+		SubscriberID:         s.subscriberID,
 		AICreditsExhausted:   s.aiCreditsExhausted,
 		AICreditsExhaustedAt: s.aiCreditsExhaustedAt,
 	}, "", "  ")
@@ -373,4 +400,14 @@ func (s *Store) persistDecisionsLocked() error {
 		return fmt.Errorf("write decisions: %w", err)
 	}
 	return nil
+}
+
+func newUUIDv4() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }

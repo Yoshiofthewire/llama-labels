@@ -67,24 +67,30 @@ func Run(args []string) error {
 		return fmt.Errorf("create state store: %w", err)
 	}
 
+	novuCfg := processor.NovuConfig{
+		SecretKey:  strings.TrimSpace(os.Getenv("NOVU_SECRET_KEY")),
+		WorkflowID: strings.TrimSpace(os.Getenv("NOVU_WORKFLOW_ID")),
+		APIBase:    strings.TrimSpace(os.Getenv("NOVU_API_BASE")),
+	}
+
 	healthSvc := health.NewService()
 	healthSvc.MarkHealthy()
 
 	switch *mode {
 	case "daemon":
-		return runDaemon(cfg, paths.ConfigFile, logger, store, healthSvc)
+		return runDaemon(cfg, paths.ConfigFile, logger, store, healthSvc, novuCfg)
 	case "server":
 		return runServer(cfg, logger, store, healthSvc)
 	case "all":
-		return runAll(cfg, paths.ConfigFile, logger, store, healthSvc)
+		return runAll(cfg, paths.ConfigFile, logger, store, healthSvc, novuCfg)
 	default:
 		return errors.New("invalid mode; expected daemon, server, or all")
 	}
 }
 
-func runDaemon(cfg config.Config, configPath string, logger *logging.Logger, store *state.Store, healthSvc *health.Service) error {
+func runDaemon(cfg config.Config, configPath string, logger *logging.Logger, store *state.Store, healthSvc *health.Service, novuCfg processor.NovuConfig) error {
 	llamaClient := newLlamaClient(cfg)
-	poller, err := processor.New(cfg, logger, store, healthSvc, newMailClient(), llamaClient)
+	poller, err := processor.New(cfg, logger, store, healthSvc, newMailClient(), llamaClient, novuCfg)
 	if err != nil {
 		return err
 	}
@@ -105,7 +111,7 @@ func runServer(cfg config.Config, logger *logging.Logger, store *state.Store, he
 	return srv.Run()
 }
 
-func runAll(cfg config.Config, configPath string, logger *logging.Logger, store *state.Store, healthSvc *health.Service) error {
+func runAll(cfg config.Config, configPath string, logger *logging.Logger, store *state.Store, healthSvc *health.Service, novuCfg processor.NovuConfig) error {
 	// Restore the sticky AI-credits flag onto the health status so a restart
 	// keeps surfacing it until a successful classify clears it.
 	if exhausted, at := store.AICreditsExhausted(); exhausted {
@@ -113,7 +119,7 @@ func runAll(cfg config.Config, configPath string, logger *logging.Logger, store 
 	}
 	mailClient := newMailClient()
 	llamaClient := newLlamaClient(cfg)
-	poller, err := processor.New(cfg, logger, store, healthSvc, mailClient, llamaClient)
+	poller, err := processor.New(cfg, logger, store, healthSvc, mailClient, llamaClient, novuCfg)
 	if err != nil {
 		return err
 	}

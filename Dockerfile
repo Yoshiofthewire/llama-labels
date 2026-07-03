@@ -38,6 +38,10 @@ ENV TZ=America/New_York
 ENV OLLAMA_BASE_URL=http://127.0.0.1:11434
 ENV OLLAMA_MODEL=nemotron-3-nano:4b
 ENV OLLAMA_MODELS=/llama_lab/ollama-models
+ENV NOVU_SECRET_KEY=
+ENV NOVU_WORKFLOW_ID=
+ENV NOVU_APPLICATION_IDENTIFIER=
+ENV NOVU_API_BASE=https://api.novu.co
 
 RUN mkdir -p /llama_lab/config /llama_lab/private /llama_lab/logs /llama_lab/state \
 	&& mkdir -p /llama_lab/ollama-models \

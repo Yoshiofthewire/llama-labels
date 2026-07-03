@@ -19,6 +19,7 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 - In Docker `server` and `daemon` run as separate processes; daemon reloads `config.yaml` from disk periodically so API-saved notification/config updates propagate without restart
 - Secrets (IMAP password, Ollama auth) are encrypted at rest under `SECRET_DIR`
 - State is persisted as JSON under `STATE_DIR`: checkpoint (last processed IMAP UID), processed set, decisions log
+- State is persisted as JSON under `STATE_DIR`: checkpoint, processed set, decisions log, and a stable Novu `subscriberId` (the Android app derives everything else from the QR pairing link)
 - Logs are structured JSON, written to stdout and a rotating file (16 MB max × 8 backups) under `LOG_DIR`
 
 ### Internal Package Layout
@@ -45,8 +46,9 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 5. Fuzzy-match Ollama response against the label allowlist
 6. Apply matched label as an IMAP keyword
 7. Send browser push notifications for new emails when `notifications.mode` is `all`, or when mode is `keywords` and selected IMAP keywords match config
-8. Persist decision (messageId, sender, subject, label, status, timestamp)
-9. Advance checkpoint to next UID
+8. Trigger Novu workflow events using the same notification-mode gate; the paired Android app receives them via FCM (the app registers its device with Novu directly and never calls this server)
+9. Persist decision (messageId, sender, subject, label, status, timestamp)
+10. Advance checkpoint to next UID
 
 ### API Contract (consumed by frontend)
 
@@ -77,6 +79,8 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 | `GET /api/notifications/vapid-public-key` | yes | VAPID public key for browser push subscription setup |
 | `POST\|DELETE /api/notifications/subscriptions` | yes | Upsert or remove a browser push subscription for the signed-in user/device |
 | `POST /api/notifications/test` | yes | Sends a test push notification to all stored subscriptions for the signed-in user and prunes stale endpoints |
+| `GET /api/notifications/novu` | yes | Returns Novu pairing info for the desktop QR code: `applicationIdentifier`, `subscriberId`, `apiBase`, `subscriberHash` (HMAC), `configured` |
+| `POST /api/notifications/novu/unpair` | yes | Revokes the Novu FCM credentials registered for this subscriber (disconnects paired Android devices) |
 
 ### Environment Variables
 
@@ -92,6 +96,10 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 | `TUNING_FILE` | `$CONFIG_DIR/TUNING.md` | Classification prompt template |
 | `IMAP_CONFIG_FILE` | `$SECRET_DIR/imap-config.json` | Encrypted IMAP credentials |
 | `IMAP_CONFIG_KEY_FILE` | `$SECRET_DIR/imap-config.key` | AES key for IMAP credentials |
+| `NOVU_SECRET_KEY` | empty | Novu API secret used for subscriber credential registration and workflow triggering |
+| `NOVU_WORKFLOW_ID` | empty | Novu workflow identifier triggered for new email keyword notifications |
+| `NOVU_APPLICATION_IDENTIFIER` | empty | Public Novu application identifier embedded in the desktop pairing QR code |
+| `NOVU_API_BASE` | `https://api.novu.co` | Novu API base URL (set to EU endpoint only for EU region) |
 
 ### Key Data Files
 
@@ -103,7 +111,7 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 | `$CONFIG_DIR/notifications-vapid-private.pem` | Generated browser push private key for notification subscriptions |
 | `$SECRET_DIR/imap-config.json` | Encrypted IMAP credentials |
 | `$SECRET_DIR/imap-config.key` | AES key for IMAP credentials |
-| `$STATE_DIR/state.json` | Checkpoint + processed-set + persisted browser push subscriptions |
+| `$STATE_DIR/state.json` | Checkpoint + processed-set + browser push subscriptions + stable Novu `subscriberId` |
 | `$STATE_DIR/decisions.json` | Decision audit log |
 
 ### Log Files

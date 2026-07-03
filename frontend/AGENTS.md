@@ -10,7 +10,7 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 
 ## Local Contracts
 
-- React 18.3, React Router 6.30, TypeScript, Vite, Quill (WYSIWYG compose editor)
+- React 18.3, React Router 6.30, TypeScript, Vite, Quill (WYSIWYG compose editor), qrcode (Android pairing QR)
 - All HTTP calls go through `src/api/client.ts` (`getJSON`, `postJSON`, `putJSON`, `deleteJSON`, `postFormData`) — never use `fetch` directly in page components
 - Auth state is owned by `App.tsx`; pages read it via props, not via direct `/api/auth/me` calls
 - All pages live under `src/pages/`; routing is defined in `App.tsx`
@@ -18,6 +18,7 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 - Compose window is owned by `App.tsx`; it always uses Quill WYSIWYG and sends via `POST /api/mail/send` (window auto-closes after successful SMTP send, including success-with-warning responses) and its surface colors follow the active theme tokens
 - `ReadPage.tsx` email-details modal includes `Reply`, `Reply All`, and `Forward` actions that open the shared compose window with prefilled recipient/subject/body context
 - Push notifications use `public/sw.js`; `main.tsx` registers the service worker on page load so the Notifications page can subscribe devices and receive push events. The service worker also refreshes push subscriptions when the browser expires them.
+- The Notifications page also renders an Android pairing QR code (using the `qrcode` package): it reads `GET /api/notifications/novu` and encodes a `llamalabels://novu-pair?app=&sub=&hash=&api=` deep link. The Android app scans it and registers with Novu directly — it never calls this server. `POST /api/notifications/novu/unpair` revokes paired devices' Novu FCM credentials.
 - On mobile user agents, switching Notifications delivery mode from `none` to `all` or `keywords` shows a browser popup reminder: "To help insure notifications work, please remove your browser from sleep state."
 - On mobile touch devices, inbox rows in `ReadPage.tsx` support swipe actions: left swipe archives, right swipe deletes, visual cue appears at 15% swipe (yellow archive / red delete), inline row labels show `Archive` or `Delete` during swipe, action commits only when released past 50% swipe, and supported browsers receive vibration haptic cues at swipe hint/commit thresholds.
 - `ReadPage.tsx` exposes a small per-user `Haptics` toggle in the inbox action bar (touch devices) and persists the preference in browser local storage (`llama-read-swipe-haptics-enabled`).
@@ -30,7 +31,7 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 | `ReadPage.tsx` | `GET /api/inbox?limit=500&mailbox=<name>`, `POST /api/inbox/actions` (bulk inbox actions + read/unread state updates, includes current mailbox context; move actions are triggered by drag-drop from this page) |
 | `HealthPage.tsx` | `GET /api/health`, `GET /api/status` (includes `emailsProcessedLastHour`), `POST /api/health/repair` |
 | `ConfigPage.tsx` | `GET/POST /api/imap/config` (also carries SMTP host/port for sending), `POST /api/imap/test` |
-| `NotificationsPage.tsx` | `GET /api/config`, `GET /api/labels`, `PUT /api/config`, `GET /api/notifications/vapid-public-key`, `POST /api/notifications/subscriptions`, `POST /api/notifications/test` (push notification mode, all-email toggle, IMAP keyword selection, device subscription, and test push broadcast to all user devices) |
+| `NotificationsPage.tsx` | `GET /api/config`, `GET /api/labels`, `PUT /api/config`, `GET /api/notifications/vapid-public-key`, `POST /api/notifications/subscriptions`, `POST /api/notifications/test`, `GET /api/notifications/novu`, `POST /api/notifications/novu/unpair` (push notification mode, all-email toggle, IMAP keyword selection, browser device subscription/testing, and Android Novu pairing QR / revoke) |
 | `TuningPage.tsx` | `GET/PUT /api/tuning` |
 | `LogsPage.tsx` | `GET /api/logs?file=<name>.log&lines=<n>`, `GET /api/logs/list` |
 
