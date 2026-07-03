@@ -1137,12 +1137,12 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
                     Delete
                   </button>
                   <button type="button" onClick={() => printEmails([selected])} disabled={actionLoading}>Print</button>
-                  <button type="button" onClick={() => { setShowImages(true); }}>Show Images</button>
                 </div>
                 <div className="email-reader-actions-row">
                   <button type="button" onClick={replyToSelectedEmail} disabled={actionLoading}>Reply</button>
                   <button type="button" onClick={replyAllToSelectedEmail} disabled={actionLoading}>Reply All</button>
                   <button type="button" onClick={forwardSelectedEmail} disabled={actionLoading}>Forward</button>
+                      <button type="button" onClick={() => { setShowImages(true); }}>Show Images</button>
                   <button type="button" onClick={() => setSelected(null)}>Close</button>
                 </div>
               </div>
