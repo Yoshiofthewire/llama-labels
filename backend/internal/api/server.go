@@ -946,7 +946,20 @@ func (s *Server) handleNotificationNovu(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "failed to load subscriber id", http.StatusInternalServerError)
 		return
 	}
-	configured := s.novuSecretKey != "" && s.novuAppIdentifier != ""
+	baseConfigured := s.novuSecretKey != "" && s.novuAppIdentifier != ""
+	configured := baseConfigured
+	configurationError := ""
+	if baseConfigured {
+		active, err := s.hasActiveNovuFCMIntegration(r.Context())
+		if err != nil {
+			s.logger.Error("failed to verify novu fcm integration", "error", err.Error())
+			configured = false
+			configurationError = "failed to verify active Novu FCM integration"
+		} else if !active {
+			configured = false
+			configurationError = "no active Novu FCM integration found for this environment"
+		}
+	}
 	serverBaseURL := s.serverBaseURL
 	if serverBaseURL == "" {
 		serverBaseURL = externalBaseURL(r)
@@ -971,6 +984,9 @@ func (s *Server) handleNotificationNovu(w http.ResponseWriter, r *http.Request) 
 		"relayEndpoint":         relayEndpoint,
 		"pairingTtlSeconds":     pairingTTLSeconds,
 		"configured":            configured,
+	}
+	if configurationError != "" {
+		resp["configurationError"] = configurationError
 	}
 	if configured {
 		resp["subscriberHash"] = s.novuSubscriberHash(subscriberID)
@@ -1024,6 +1040,17 @@ func (s *Server) handleNotificationNovuRelayFCM(w http.ResponseWriter, r *http.R
 			http.Error(w, "invalid subscriber hash", http.StatusUnauthorized)
 			return
 		}
+	}
+
+	active, err := s.hasActiveNovuFCMIntegration(r.Context())
+	if err != nil {
+		s.logger.Error("novu relay integration check failed", "subscriber_id", subscriberID, "error", err.Error())
+		http.Error(w, "failed to verify Novu FCM integration", http.StatusBadGateway)
+		return
+	}
+	if !active {
+		http.Error(w, "novu fcm integration is not active for this environment", http.StatusServiceUnavailable)
+		return
 	}
 
 	if err := s.ensureNovuSubscriber(r.Context(), subscriberID); err != nil {
@@ -1226,6 +1253,40 @@ func (s *Server) upsertNovuFCMCredential(ctx context.Context, subscriberID, devi
 		lastErr = errors.New("novu credential upsert failed")
 	}
 	return lastErr
+}
+
+func (s *Server) hasActiveNovuFCMIntegration(ctx context.Context) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.novuAPIBase+"/v1/integrations/active", nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "ApiKey "+s.novuSecretKey)
+
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return false, fmt.Errorf("novu integrations active status=%d response=%s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+
+	var integrations []struct {
+		ProviderID string `json:"providerId"`
+		Active     bool   `json:"active"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&integrations); err != nil {
+		return false, err
+	}
+
+	for _, integration := range integrations {
+		if integration.Active && strings.EqualFold(strings.TrimSpace(integration.ProviderID), "fcm") {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func externalBaseURL(r *http.Request) string {

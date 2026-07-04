@@ -130,7 +130,8 @@ Required Novu setup per client/deployment:
 2. Create a workflow and set `NOVU_WORKFLOW_ID` to that workflow's identifier.
 3. Copy your Novu application identifier into `NOVU_APPLICATION_IDENTIFIER`.
 4. Set `NOVU_SECRET_KEY` from your Novu environment.
-5. Ensure your mobile app is configured for that same Novu project and its own Firebase/FCM project.
+5. Connect and activate an `fcm` push integration in that same Novu environment (Integration Store -> Push -> Firebase Cloud Messaging).
+6. Ensure your mobile app is configured for that same Novu project and its own Firebase/FCM project.
 
 Desktop pairing behavior:
 

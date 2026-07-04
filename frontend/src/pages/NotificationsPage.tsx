@@ -31,6 +31,7 @@ type NovuStatusResponse = {
   pairingToken?: string;
   pairingExpiresAt?: string;
   pairingTtlSeconds?: number;
+  configurationError?: string;
   configured: boolean;
 };
 
@@ -524,7 +525,7 @@ export function NotificationsPage() {
           </div>
 
           {!novuStatus?.configured ? (
-            <p className="notifications-empty">Novu is not configured on the server yet. Set NOVU_SECRET_KEY, NOVU_WORKFLOW_ID and NOVU_APPLICATION_IDENTIFIER first.</p>
+            <p className="notifications-empty">{novuStatus?.configurationError ?? "Novu is not configured on the server yet. Set NOVU_SECRET_KEY, NOVU_WORKFLOW_ID and NOVU_APPLICATION_IDENTIFIER first."}</p>
           ) : (
             <>
               {novuQrDataUrl ? (
