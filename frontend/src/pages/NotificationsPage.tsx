@@ -538,7 +538,6 @@ export function NotificationsPage() {
                       />
                     </div>
                   ) : null}
-                  <p className="notifications-qr-hint">Open the Android app, choose Pair Device, and scan this code. The code includes Novu identifiers plus your server relay endpoint for mobile token sync.</p>
                 </div>
               ) : (
                 <p className="notifications-empty">Preparing pairing code…</p>
