@@ -516,7 +516,7 @@ export function NotificationsPage() {
           <div className="notifications-android-head">
             <div>
               <h3>Mobile App Pairing</h3>
-              <p className="notifications-muted">Scan this QR code from the Llama Labels Android app to receive push notifications for keyword-labeled email.</p>
+              <p className="notifications-muted">Scan this QR code from the Llama Labels app to receive push notifications for keyword-labeled email.</p>
             </div>
             <button type="button" className="notifications-ghost" onClick={() => void refreshNovuStatus()}>
               Refresh
