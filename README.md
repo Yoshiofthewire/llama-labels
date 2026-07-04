@@ -98,6 +98,7 @@ Common variables:
 - `OLLAMA_MODELS_HOST_DIR` (default `./share/ollama/models`)
 - `IMAP_CONFIG_FILE` (default `/llama_lab/private/imap-config.json`)
 - `IMAP_CONFIG_KEY_FILE` (default `/llama_lab/private/imap-config.key`)
+- `SERVER_BASE_URL` (optional but recommended for mobile pairing; public URL embedded as `srv` in QR and used to build `relay`)
 - `NOVU_SECRET_KEY` (required for mobile push pairing and Novu event trigger)
 - `NOVU_WORKFLOW_ID` (required Novu workflow identifier, for example `new-email-push-notification`)
 - `NOVU_APPLICATION_IDENTIFIER` (required public Novu app id encoded in desktop pairing QR)
@@ -134,6 +135,7 @@ Required Novu setup per client/deployment:
 Desktop pairing behavior:
 
 - Notifications page renders a QR link with `app`, `sub`, `hash`, `api`, `srv`, `relay`, and `pt`.
+- Set `SERVER_BASE_URL` in `.env` so `srv` and `relay` always point to the deployment address the mobile app should use (no manual server URL entry required).
 - `pt` is a signed pairing token valid for 90 seconds.
 - UI shows a 4px countdown bar under the QR that shrinks over 90 seconds, transitions green to red, and is red during the last 15 seconds.
 - Mobile app scans QR and syncs its device token through `relay` (or `srv + /api/notifications/novu/relay/fcm` fallback).

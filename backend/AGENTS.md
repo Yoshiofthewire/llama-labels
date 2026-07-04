@@ -97,6 +97,7 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 | `TUNING_FILE` | `$CONFIG_DIR/TUNING.md` | Classification prompt template |
 | `IMAP_CONFIG_FILE` | `$SECRET_DIR/imap-config.json` | Encrypted IMAP credentials |
 | `IMAP_CONFIG_KEY_FILE` | `$SECRET_DIR/imap-config.key` | AES key for IMAP credentials |
+| `SERVER_BASE_URL` | empty | Public backend URL embedded in mobile pairing QR (`srv`) and used to build relay endpoint (`relay`) |
 | `NOVU_SECRET_KEY` | empty | Novu API secret used for subscriber credential registration and workflow triggering |
 | `NOVU_WORKFLOW_ID` | empty | Novu workflow identifier triggered for new email keyword notifications |
 | `NOVU_APPLICATION_IDENTIFIER` | empty | Public Novu application identifier embedded in the desktop pairing QR code |

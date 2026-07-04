@@ -66,6 +66,7 @@ type Server struct {
 	novuSecretKey     string
 	novuAPIBase       string
 	novuAppIdentifier string
+	serverBaseURL     string
 }
 
 func NewServer(cfg config.Config, logger *logging.Logger, store *state.Store, healthSvc *health.Service, mailClient imapadapter.Client, onConfigUpdated func(config.Config)) *Server {
@@ -93,6 +94,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, store *state.Store, he
 		novuSecretKey:     strings.TrimSpace(os.Getenv("NOVU_SECRET_KEY")),
 		novuAPIBase:       novuBase,
 		novuAppIdentifier: strings.TrimSpace(os.Getenv("NOVU_APPLICATION_IDENTIFIER")),
+		serverBaseURL:     strings.TrimRight(strings.TrimSpace(os.Getenv("SERVER_BASE_URL")), "/"),
 	}
 }
 
@@ -945,8 +947,14 @@ func (s *Server) handleNotificationNovu(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	configured := s.novuSecretKey != "" && s.novuAppIdentifier != ""
-	serverBaseURL := externalBaseURL(r)
-	relayEndpoint := strings.TrimRight(serverBaseURL, "/") + "/api/notifications/novu/relay/fcm"
+	serverBaseURL := s.serverBaseURL
+	if serverBaseURL == "" {
+		serverBaseURL = externalBaseURL(r)
+	}
+	relayEndpoint := ""
+	if serverBaseURL != "" {
+		relayEndpoint = strings.TrimRight(serverBaseURL, "/") + "/api/notifications/novu/relay/fcm"
+	}
 	pairingTTLSeconds := int64(90)
 	if configured {
 		if err := s.ensureNovuSubscriber(r.Context(), subscriberID); err != nil {
@@ -1165,6 +1173,26 @@ func (s *Server) upsertNovuFCMCredential(ctx context.Context, subscriberID, devi
 		path   string
 		body   map[string]any
 	}{
+		{
+			method: http.MethodPut,
+			path:   "/v1/subscribers/" + url.PathEscape(trimmedSubscriber) + "/credentials",
+			body: map[string]any{
+				"providerId": "fcm",
+				"credentials": map[string]any{
+					"deviceTokens": []string{token},
+				},
+			},
+		},
+		{
+			method: http.MethodPatch,
+			path:   "/v1/subscribers/" + url.PathEscape(trimmedSubscriber) + "/credentials",
+			body: map[string]any{
+				"providerId": "fcm",
+				"credentials": map[string]any{
+					"deviceTokens": []string{token},
+				},
+			},
+		},
 		{
 			method: http.MethodPut,
 			path:   "/v1/subscribers/" + url.PathEscape(trimmedSubscriber) + "/credentials/fcm",

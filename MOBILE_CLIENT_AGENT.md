@@ -20,14 +20,12 @@ The app must parse these `llamalabels://novu-pair` query parameters:
 
 ## Required Mobile Settings
 
-Add/keep a user-editable setting:
-
-- `Server URL`: base URL for the backend deployment
+`Server URL` must be auto-populated from QR payload and persisted by the app.
 
 Rules:
 
-- If QR has `srv`, use it as the active server URL for this pairing session.
-- If the user has manually set a server URL, it can override saved defaults.
+- If QR has `srv`, use it as the active server URL for this pairing session and store it for future token refresh calls.
+- The app should not require manual server URL entry during normal pairing.
 - If QR has no `relay`, derive relay URL as:
   - `{Server URL}/api/notifications/novu/relay/fcm`
 
