@@ -1385,13 +1385,14 @@ pre {
 .compose-window {
   width: min(920px, 96vw);
   min-height: min(760px, 90vh);
+  max-height: 90vh;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 14px;
   color: var(--ink-strong);
   padding: 16px;
-  display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
@@ -1492,6 +1493,10 @@ pre {
   padding: 0;
   background: var(--panel);
   color: var(--ink-strong);
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .compose-editor-html .ql-toolbar.ql-snow {
@@ -1500,11 +1505,13 @@ pre {
   border-radius: 10px 10px 0 0;
   background: var(--panel);
   color: var(--ink-strong);
+  flex: 0 0 auto;
 }
 
 .compose-editor-html .ql-container.ql-snow {
   border: 0;
-  min-height: min(360px, 46vh);
+  flex: 1 1 auto;
+  min-height: 0;
   font-family: var(--sans);
   font-size: 0.95rem;
   background: var(--bg);
@@ -1512,7 +1519,7 @@ pre {
 }
 
 .compose-editor-html .ql-editor {
-  min-height: min(360px, 46vh);
+  overflow-y: auto;
   background: var(--bg);
   color: var(--ink-strong);
 }
