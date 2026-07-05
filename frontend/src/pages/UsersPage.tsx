@@ -11,6 +11,14 @@ import {
 } from "../api/users";
 import { useAuth, type Role } from "../auth";
 
+function formatJoined(value: string): string {
+  const when = new Date(value);
+  if (Number.isNaN(when.getTime())) {
+    return "";
+  }
+  return when.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
 export function UsersPage() {
   const auth = useAuth();
   const [users, setUsers] = useState<ManagedUser[]>([]);
@@ -24,6 +32,9 @@ export function UsersPage() {
   const [createBusy, setCreateBusy] = useState(false);
 
   const statusTone = status.toLowerCase().includes("failed") ? "notice notice-error" : "notice notice-success";
+
+  const activeCount = users.filter((user) => user.active).length;
+  const adminCount = users.filter((user) => user.role === "admin").length;
 
   async function refresh() {
     try {
@@ -107,82 +118,158 @@ export function UsersPage() {
   }
 
   return (
-    <section className="panel">
-      <h2>Manage Users</h2>
-      <p>Create accounts, adjust roles, reset passwords, and deactivate users. Each user connects their own mailbox and manages their own devices and tuning.</p>
+    <section className="panel users-page">
+      <header className="users-header">
+        <div>
+          <h2>Manage Users</h2>
+          <p>
+            Create accounts, adjust roles, reset passwords, and deactivate users. Each user connects their own
+            mailbox and manages their own devices and tuning.
+          </p>
+        </div>
+        {!loading && users.length > 0 ? (
+          <div className="users-stats">
+            <span className="users-stat">
+              <strong>{users.length}</strong> total
+            </span>
+            <span className="users-stat">
+              <strong>{activeCount}</strong> active
+            </span>
+            <span className="users-stat">
+              <strong>{adminCount}</strong> admin
+            </span>
+          </div>
+        ) : null}
+      </header>
 
-      <form onSubmit={submitCreate} className="auth-form">
-        <h3>Create User</h3>
-        <label>
-          <div>Username</div>
-          <input value={newUsername} onChange={(e) => setNewUsername(e.target.value)} autoComplete="off" />
-        </label>
-        <label>
-          <div>Temporary Password</div>
-          <input
-            type="password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            autoComplete="new-password"
-            placeholder="User must change this on first login"
-          />
-        </label>
-        <label>
-          <div>Role</div>
-          <select value={newRole} onChange={(e) => setNewRole(e.target.value as Role)}>
-            <option value="user">user</option>
-            <option value="admin">admin</option>
-          </select>
-        </label>
-        <button type="submit" disabled={createBusy}>
-          {createBusy ? "Creating..." : "Create User"}
-        </button>
-      </form>
+      <div className="users-layout">
+        <form onSubmit={submitCreate} className="users-card users-create-card">
+          <h3>Create User</h3>
+          <p className="users-muted">New members must change their temporary password on first sign-in.</p>
+          <label>
+            <div>Username</div>
+            <input value={newUsername} onChange={(e) => setNewUsername(e.target.value)} autoComplete="off" />
+          </label>
+          <label>
+            <div>Temporary Password</div>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              autoComplete="new-password"
+              placeholder="User must change this on first login"
+            />
+          </label>
+          <label>
+            <div>Role</div>
+            <select value={newRole} onChange={(e) => setNewRole(e.target.value as Role)}>
+              <option value="user">user</option>
+              <option value="admin">admin</option>
+            </select>
+          </label>
+          <button type="submit" className="users-create-submit" disabled={createBusy}>
+            {createBusy ? "Creating..." : "Create User"}
+          </button>
+        </form>
 
-      <h3>Users</h3>
-      {loading ? <p>Loading users...</p> : null}
-      {!loading && users.length === 0 ? <p>No users found.</p> : null}
-      {!loading && users.length > 0 ? (
-        <table className="users-table">
-          <thead>
-            <tr>
-              <th>Username</th>
-              <th>Role</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((user) => {
-              const isSelf = user.id === auth.userId;
-              const busy = busyId === user.id;
-              return (
-                <tr key={user.id}>
-                  <td>
-                    {user.username}
-                    {isSelf ? " (you)" : ""}
-                    {user.mustChangePassword ? <span title="Must change password on next login"> *</span> : null}
-                  </td>
-                  <td>{user.role}</td>
-                  <td>{user.active ? "active" : "deactivated"}</td>
-                  <td>
-                    <button type="button" onClick={() => toggleRole(user)} disabled={busy}>
-                      {user.role === "admin" ? "Make User" : "Make Admin"}
-                    </button>{" "}
-                    <button type="button" onClick={() => resetPassword(user)} disabled={busy}>
-                      Reset Password
-                    </button>{" "}
-                    <button type="button" onClick={() => toggleActive(user)} disabled={busy}>
-                      {user.active ? "Deactivate" : "Reactivate"}
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      ) : null}
-      <p className="config-muted">* password change required on next login</p>
+        <div className="users-card users-list-card">
+          <div className="users-list-head">
+            <h3>Users</h3>
+            {!loading && users.length > 0 ? (
+              <span className="users-count">{users.length}</span>
+            ) : null}
+          </div>
+
+          {loading ? <p className="users-muted">Loading users...</p> : null}
+          {!loading && users.length === 0 ? (
+            <div className="users-empty">No users found.</div>
+          ) : null}
+
+          {!loading && users.length > 0 ? (
+            <div className="users-table-wrap">
+              <table className="users-table">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th className="users-col-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((user) => {
+                    const isSelf = user.id === auth.userId;
+                    const busy = busyId === user.id;
+                    const joined = formatJoined(user.createdAt);
+                    return (
+                      <tr key={user.id} className={busy ? "users-row users-row-busy" : "users-row"}>
+                        <td>
+                          <div className="users-identity">
+                            <span className="users-avatar" aria-hidden="true">
+                              {user.username.slice(0, 1).toUpperCase()}
+                            </span>
+                            <div className="users-identity-text">
+                              <span className="users-name">
+                                {user.username}
+                                {isSelf ? <span className="users-you">you</span> : null}
+                              </span>
+                              <span className="users-sub">
+                                {joined ? `Joined ${joined}` : " "}
+                                {user.mustChangePassword ? (
+                                  <span className="users-pw-flag" title="Must change password on next login">
+                                    password change required
+                                  </span>
+                                ) : null}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`users-badge users-badge-${user.role}`}>{user.role}</span>
+                        </td>
+                        <td>
+                          <span className={`users-badge users-status-${user.active ? "active" : "inactive"}`}>
+                            <span className="users-dot" aria-hidden="true" />
+                            {user.active ? "active" : "deactivated"}
+                          </span>
+                        </td>
+                        <td className="users-col-actions">
+                          <div className="users-actions">
+                            <button
+                              type="button"
+                              className="users-action"
+                              onClick={() => toggleRole(user)}
+                              disabled={busy}
+                            >
+                              {user.role === "admin" ? "Make User" : "Make Admin"}
+                            </button>
+                            <button
+                              type="button"
+                              className="users-action"
+                              onClick={() => resetPassword(user)}
+                              disabled={busy}
+                            >
+                              Reset Password
+                            </button>
+                            <button
+                              type="button"
+                              className={user.active ? "users-action users-action-danger" : "users-action"}
+                              onClick={() => toggleActive(user)}
+                              disabled={busy}
+                            >
+                              {user.active ? "Deactivate" : "Reactivate"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      </div>
 
       {status ? <p className={statusTone}>{status}</p> : null}
     </section>
