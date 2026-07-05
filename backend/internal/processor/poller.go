@@ -712,6 +712,12 @@ func (p *Poller) maybeSendNativePushNotification(uc userCtx, msg imapadapter.Mes
 		cancel()
 		if err != nil {
 			failed++
+			// TODO(server-side management): a failed send (relay unreachable,
+			// upstream 5xx, or a 429 when the relay's per-server rate limit is
+			// exceeded) currently drops the push — the email still syncs in-app,
+			// but no notification fires. Add server-side handling: honor the
+			// relay's Retry-After, queue and re-attempt over-limit / transient
+			// failures with backoff, and surface persistent failures to the user.
 			if errors.Is(err, ErrNativeDeviceStale) && strings.TrimSpace(device.DeviceID) != "" {
 				ok, rmErr := uc.store.RemoveNativeDevice(device.DeviceID)
 				if rmErr == nil && ok {

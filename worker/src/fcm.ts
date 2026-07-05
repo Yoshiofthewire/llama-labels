@@ -150,6 +150,10 @@ export async function sendFcmMessage(
 ): Promise<FcmResult> {
   const accessToken = await getAccessToken(config, cache);
 
+  // TODO(ios): add an `apns` block (aps.sound / apns-priority / content-available)
+  // for proper iOS delivery. Today the envelope is Android-tuned — FCM will still
+  // relay to APNs for iOS tokens, but without iOS-specific priority/sound. See
+  // message.platform, which the relay already forwards, to branch per platform.
   const payload = {
     message: {
       token: message.token,

@@ -9,9 +9,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"llama-lab/backend/internal/fsutil"
 	"llama-lab/backend/internal/logging"
 	"llama-lab/backend/internal/state"
 )
@@ -69,17 +71,116 @@ func newRelaySenderFromEnv(log *logging.Logger) *relaySender {
 	if relayURL == "" {
 		return nil
 	}
-	apiKey := strings.TrimSpace(os.Getenv("PUSH_RELAY_KEY"))
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	apiKey, err := resolveRelayKey(log, relayURL, client)
+	if err != nil {
+		logNativeSenderError(log, "relay key unavailable", err.Error())
+		return nil
+	}
 	if apiKey == "" {
-		logNativeSenderError(log, "PUSH_RELAY_KEY missing", "set PUSH_RELAY_KEY to the per-server API key issued by the relay operator")
+		logNativeSenderError(log, "PUSH_RELAY_KEY missing", "no key in PUSH_RELAY_KEY, the key file, or from auto-registration")
 		return nil
 	}
 
 	return &relaySender{
 		relayURL: relayURL,
 		apiKey:   apiKey,
-		client:   &http.Client{Timeout: 15 * time.Second},
+		client:   client,
 	}
+}
+
+// relayKeyFilePath is where an auto-registered key is persisted so it survives
+// restarts (re-registering would mint a new key and invalidate this one, since
+// the relay allows one key per IP). Override with PUSH_RELAY_KEY_FILE.
+func relayKeyFilePath() string {
+	if p := strings.TrimSpace(os.Getenv("PUSH_RELAY_KEY_FILE")); p != "" {
+		return p
+	}
+	dir := strings.TrimSpace(os.Getenv("SECRET_DIR"))
+	if dir == "" {
+		dir = "/llama_lab/private"
+	}
+	return filepath.Join(dir, "push_relay_key")
+}
+
+// resolveRelayKey obtains the per-server relay key, in order of preference:
+//  1. PUSH_RELAY_KEY (explicit env, e.g. an operator-issued key) — never touches
+//     the key file.
+//  2. the persisted key file (a previous auto-registration).
+//  3. auto-registration: POST /register, then persist the returned key so it is
+//     reused on the next boot (zero setup for the self-hoster).
+func resolveRelayKey(log *logging.Logger, relayURL string, client *http.Client) (string, error) {
+	if key := strings.TrimSpace(os.Getenv("PUSH_RELAY_KEY")); key != "" {
+		return key, nil
+	}
+
+	path := relayKeyFilePath()
+	if b, err := os.ReadFile(path); err == nil {
+		if key := strings.TrimSpace(string(b)); key != "" {
+			return key, nil
+		}
+	}
+
+	key, err := registerWithRelay(relayURL, client)
+	if err != nil {
+		return "", err
+	}
+	if err := fsutil.AtomicWriteFile(path, []byte(key+"\n"), 0o600); err != nil {
+		// Usable this run, but not persisted — we'll re-register (and supersede
+		// this key) next boot. Warn so the operator can fix the volume/path.
+		if log != nil {
+			log.Error("failed to persist auto-registered push relay key", "path", path, "error", err.Error())
+		}
+	} else if log != nil {
+		log.Info("auto-registered with push relay", "key_file", path)
+	}
+	return key, nil
+}
+
+// registerWithRelay self-issues a per-server key from the relay's public
+// /register endpoint. No credentials are required; the relay ties one active
+// key to the requesting IP.
+func registerWithRelay(relayURL string, client *http.Client) (string, error) {
+	label, _ := os.Hostname()
+	if strings.TrimSpace(label) == "" {
+		label = "llama-lab"
+	}
+	body, err := json.Marshal(map[string]string{"label": label})
+	if err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, relayURL+"/register", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("push relay registration failed: status=%d response=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	var parsed struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return "", fmt.Errorf("push relay registration returned invalid JSON: %w", err)
+	}
+	key := strings.TrimSpace(parsed.Key)
+	if key == "" {
+		return "", errors.New("push relay registration returned no key")
+	}
+	return key, nil
 }
 
 func (s *relaySender) Name() string {

@@ -2,6 +2,24 @@ name = "llama-labels-push-relay"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
 
+# Persist the structured logs so send failures / rate-limit events are queryable
+# in the dashboard (not just via a live `wrangler tail`).
+[observability]
+enabled = true
+
+[vars]
+# The per-minute limit is enforced by the PUSH_RATE_LIMITER binding below.
+# RATE_LIMIT_PER_MINUTE here is display-only (/health + 429 body) and should be
+# kept equal to that binding's simple.limit.
+# NOTE: hour/day rolling limits were removed so an accepted send does zero KV
+# writes (free-tier friendly). Restore them via Durable Objects on Workers Paid.
+RATE_LIMIT_PER_MINUTE = "10"  # display only; keep equal to PUSH_RATE_LIMITER.simple.limit
+
+# Public self-registration (POST /register). Self-hosted servers mint their own
+# key with no maintainer involvement. Set to "false" to close registration if
+# abused; pair with a Cloudflare rate-limit rule on /register to cap key farming.
+REGISTRATION_ENABLED = "true"
+
 # KV namespaces. Create these with:
 #   npx wrangler kv namespace create API_KEYS
 #   npx wrangler kv namespace create OAUTH_CACHE
@@ -13,6 +31,20 @@ id = "REPLACE_WITH_API_KEYS_NAMESPACE_ID"
 [[kv_namespaces]]
 binding = "OAUTH_CACHE"
 id = "REPLACE_WITH_OAUTH_CACHE_NAMESPACE_ID"
+
+# Native per-key minute-tier rate limiter (no KV writes). period must be 10 or 60;
+# namespace_id is any unique integer you pick for this limiter.
+[[unsafe.bindings]]
+name = "PUSH_RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }
+
+# Analytics Engine dataset for per-key usage counters (off the KV write path).
+# Query lifetime totals per key via the Analytics Engine SQL API. Created on deploy.
+[[analytics_engine_datasets]]
+binding = "USAGE_ANALYTICS"
+dataset = "llama_push_usage"
 
 # Secrets (set with `npx wrangler secret put <NAME>`, never commit them):
 #   FCM_CLIENT_EMAIL   - client_email from the Firebase service-account JSON

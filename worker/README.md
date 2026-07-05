@@ -42,14 +42,50 @@ self-hosted Go server  --(Bearer per-server key)-->  this Worker  --(service acc
    npx wrangler deploy
    ```
 
-## Issuing a key to a self-hoster
+## Self-registration (no maintainer involvement)
+
+Self-hosted servers get a key on their own — you don't issue anything. The Go
+backend does this automatically: on first start with `PUSH_RELAY_URL` set and no
+`PUSH_RELAY_KEY`, it calls `/register`, then persists the key under `SECRET_DIR`
+and reuses it on every restart. Equivalent by hand:
+
+```sh
+curl -X POST https://<your-worker>.workers.dev/register \
+  -H "Content-Type: application/json" \
+  -d '{"label":"alice-server"}'
+# -> {"id":"...","label":"alice-server","key":"<RAW KEY>","expiresAt":null}
+```
+
+**One active key per IP.** Registering again from the same IP mints a new key and
+**invalidates the previous one** — so a server that loses its key file just
+re-registers and keeps working, and a single IP can't accumulate keys. Servers
+behind the same public IP therefore share one key slot (the latest wins).
+
+Self-registered keys never expire and are tagged `"source":"self"` (with the
+registering IP) in the admin list, so you can audit and revoke abusers. Abuse is
+further bounded by the per-key rolling rate limits and the `REGISTRATION_ENABLED
+= "false"` kill-switch. To cap how often one IP can churn keys, add a Cloudflare
+rate-limit rule on the `/register` route.
+
+## Issuing a key manually (optional)
+
+You can still mint keys yourself — e.g. to pre-provision a server or set an
+expiry:
 
 ```sh
 curl -X POST https://<your-worker>.workers.dev/admin/keys \
   -H "Authorization: Bearer $ADMIN_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"label":"alice-server"}'
-# -> {"id":"...","label":"alice-server","key":"<RAW KEY, shown only once>"}
+# -> {"id":"...","label":"alice-server","key":"<RAW KEY, shown only once>","expiresAt":null}
+```
+
+Optionally give the key an expiry — either a lifetime in days or an explicit
+ISO timestamp (an explicit `expiresAt` wins over `ttlDays`):
+
+```sh
+-d '{"label":"alice-server","ttlDays":90}'
+-d '{"label":"alice-server","expiresAt":"2027-01-01T00:00:00Z"}'
 ```
 
 Give the self-hoster the raw `key` (out of band). They set on their server:
@@ -62,13 +98,29 @@ PUSH_RELAY_KEY=<the raw key>
 List keys: `curl -H "Authorization: Bearer $ADMIN_SECRET" .../admin/keys`
 Revoke:    `curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" .../admin/keys/<id>`
 
+`GET /admin/keys` returns per-key metadata and source:
+
+```json
+{ "keys": [ {
+  "id": "…", "label": "alice-server", "enabled": true,
+  "createdAt": "2026-07-04T…", "expiresAt": null, "expired": false,
+  "source": "self", "registeredIp": "203.0.113.7"
+} ] }
+```
+
+Send counts and last-seen are **not** here — they're recorded in Analytics Engine
+(see [Usage](#usage)). Expired keys stay listed (with `"expired": true`) until you
+revoke them, so you can see which keys lapsed.
+
 ## Endpoints
 
 | Method | Path              | Auth                   | Purpose                          |
 | ------ | ----------------- | ---------------------- | -------------------------------- |
+| GET    | `/health`         | none                   | Liveness + whether configured    |
+| POST   | `/register`       | none                   | Self-issue a per-server key      |
 | POST   | `/send`           | Bearer per-server key  | Deliver one push                 |
 | POST   | `/admin/keys`     | Bearer `ADMIN_SECRET`  | Mint a key (returns raw key once)|
-| GET    | `/admin/keys`     | Bearer `ADMIN_SECRET`  | List key metadata                |
+| GET    | `/admin/keys`     | Bearer `ADMIN_SECRET`  | List key metadata + last-used    |
 | DELETE | `/admin/keys/{id}`| Bearer `ADMIN_SECRET`  | Revoke a key                     |
 
 `POST /send` body:
@@ -78,14 +130,61 @@ Revoke:    `curl -X DELETE -H "Authorization: Bearer $ADMIN_SECRET" .../admin/ke
 ```
 
 Responses: `200 {"ok":true}` on delivery; `410 {"stale":true}` when the token is
-no longer registered (the Go server then removes the device); `401` for a bad
-key; `502` for other upstream FCM errors.
+no longer registered (the Go server then removes the device); `401` for a bad or
+expired key; `429` when the per-key rate limit is exceeded (body has
+`"window":"minute"` and a `Retry-After` header); `502` for other upstream FCM
+errors. Error bodies include a `requestId` that matches the `X-Request-Id`
+response header and the structured logs.
+
+## Rate limiting
+
+Each key is capped by a **per-minute** limit on `/send`, enforced by the native
+`PUSH_RATE_LIMITER` binding in `wrangler.toml` (`simple = { limit = 10, period =
+60 }`) — a fixed 60s window with **no KV writes**. Change the limit there and
+redeploy. `RATE_LIMIT_PER_MINUTE` in `[vars]` is display-only (`/health` + the
+429 body) and should be kept equal to `simple.limit`. Exceeding it returns `429`
+with `{"error":"rate limit exceeded","window":"minute","limit":10,"retryAfterSeconds":60}`.
+
+> **Hour/day rolling limits were removed for now.** They required a KV
+> read-modify-write on every accepted send, which capped the free tier at
+> ~1,000 pushes/day. Dropping them keeps an accepted send at **zero KV writes**.
+> Restore rolling hour/day caps with Durable Objects (exact, atomic, no KV write
+> pressure) once running on Workers Paid — see the `TODO(paid-tier)` in
+> `src/index.ts`.
+
+## Usage
+
+Each accepted send writes one data point to the `USAGE_ANALYTICS` Analytics
+Engine dataset (`llama_push_usage`) — off the KV write path — with the key id,
+label, and source. Query totals and last-seen per key via the Analytics Engine
+SQL API, e.g.:
+
+```sql
+SELECT blob1 AS key_id, sum(_sample_interval * double1) AS sends, max(timestamp) AS last_seen
+FROM llama_push_usage GROUP BY key_id ORDER BY sends DESC
+```
+
+The admin list no longer carries usage counts or `lastUsedAt` — that all lives in
+Analytics Engine now.
+
+## Observability
+
+- Every request is assigned a UUID `requestId`, returned in the `X-Request-Id`
+  header (and in error bodies). Each request emits one structured JSON log line
+  (plus event lines for sends, denials, and key changes). Tail them live with
+  `npx wrangler tail`, or ship them via Workers Logs / Logpush.
+- `GET /health` returns `{ ok, configured, rateLimits: { perMinute },
+  registrationEnabled }` with no auth — use it for uptime checks. `configured` is
+  false until all FCM secrets are set.
 
 ## Notes
 
 - Only the SHA-256 hash of each API key is stored in KV; the raw key is shown
   once at creation.
 - The Google OAuth access token is cached in the `OAUTH_CACHE` KV namespace and
-  refreshed ~1 minute before expiry.
-- Optional hardening: add a Cloudflare rate-limit rule on `/send`, or a per-key
-  KV counter, to cap abuse. Not required for a basic deployment.
+  refreshed ~1 minute before expiry. Key records and the `ipkey:<ip>` indexes
+  (one key per IP) live in `API_KEYS`.
+- An accepted send performs **no KV writes**: the minute limiter uses the native
+  binding, usage goes to Analytics Engine, and the hour/day KV log is gone. The
+  remaining per-send KV cost is reads (key lookup + OAuth cache), so the free
+  tier now scales to tens of thousands of pushes/day.
