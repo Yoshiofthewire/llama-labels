@@ -118,10 +118,8 @@ Common variables:
 - `IMAP_CONFIG_KEY_FILE` (default `/llama_lab/private/imap-config.key`)
 - `SERVER_BASE_URL` (optional but recommended for mobile pairing; public URL embedded as `srv` in QR and used to build `reg`)
 - `PAIRING_SECRET` (required for mobile pairing token signing/validation)
-- `FCM_SERVICE_ACCOUNT_FILE` (optional; path to Firebase service-account JSON for backend direct native push delivery via FCM HTTP v1)
-- `FCM_PROJECT_ID` (optional override; otherwise read from service-account `project_id`)
-- `FCM_TOKEN_URL` (optional OAuth token endpoint override; otherwise read from service-account `token_uri`)
-- `FCM_SEND_URL` (optional endpoint override; defaults to `https://fcm.googleapis.com/v1/projects/<project>/messages:send`)
+- `PUSH_RELAY_URL` (optional; base URL of the central push relay Worker that delivers native push to FCM)
+- `PUSH_RELAY_KEY` (per-server API key issued by the relay operator; required together with `PUSH_RELAY_URL` to enable native push)
 
 Notes:
 
@@ -160,9 +158,16 @@ Native registration behavior:
 
 Firebase credential guidance:
 
-- Backend direct native push delivery does not read `google-services.json`.
+- The backend never holds Firebase credentials and never reads `google-services.json`.
+- Native push is delivered through a central **push relay** (Cloudflare Worker) that holds the single Firebase service account the published mobile app is built against. This is what lets anyone run their own server with the same app without a Firebase account or a recompile.
 - `google-services.json` belongs in the mobile project (Android app module, typically `app/google-services.json`) and should never be committed.
-- Backend push delivery uses service-account OAuth (`FCM_SERVICE_ACCOUNT_FILE`) with FCM HTTP v1.
+
+## Push Relay (Cloudflare Worker)
+
+Native push delivery lives in a Cloudflare Worker under [`worker/`](worker/), run by the project maintainer.
+
+- Self-hosters: ask the relay operator for a per-server API key, then set `PUSH_RELAY_URL` and `PUSH_RELAY_KEY`. That is all — no Firebase project needed.
+- Maintainer/relay operator: deploy the Worker and mint per-server keys. See [`worker/README.md`](worker/README.md) for setup, secrets, and key management.
 
 ## Persistence
 

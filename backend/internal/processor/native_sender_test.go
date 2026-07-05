@@ -2,82 +2,77 @@ package processor
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"llama-lab/backend/internal/state"
 )
 
-func TestFCMSenderSendSuccess(t *testing.T) {
+func TestRelaySenderSendSuccess(t *testing.T) {
 	var seenAuth string
+	var seenBody relaySendRequest
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/token":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"access_token":"test-access-token","expires_in":3600}`))
-		case "/send":
-			seenAuth = r.Header.Get("Authorization")
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"name":"projects/demo/messages/123"}`))
-		default:
+		if r.URL.Path != "/send" {
 			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		seenAuth = r.Header.Get("Authorization")
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &seenBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer ts.Close()
 
-	serviceAccountPath := writeTestServiceAccountFile(t, ts.URL+"/token")
-	t.Setenv("FCM_SERVICE_ACCOUNT_FILE", serviceAccountPath)
-	t.Setenv("FCM_PROJECT_ID", "demo-project")
-	t.Setenv("FCM_SEND_URL", ts.URL+"/send")
+	t.Setenv("PUSH_RELAY_URL", ts.URL)
+	t.Setenv("PUSH_RELAY_KEY", "test-api-key")
 
-	sender := newFCMSenderFromEnv(nil)
+	sender := newRelaySenderFromEnv(nil)
 	if sender == nil {
-		t.Fatal("newFCMSenderFromEnv(nil) returned nil")
+		t.Fatal("newRelaySenderFromEnv(nil) returned nil")
 	}
 	sender.client = ts.Client()
 
-	err := sender.Send(context.Background(), state.NativeDevice{PushToken: "device-token"}, NativePushMessage{Title: "Title", Body: "Body", Data: map[string]string{"messageId": "m1"}})
+	err := sender.Send(context.Background(), state.NativeDevice{PushToken: "device-token", Platform: "android"}, NativePushMessage{Title: "Title", Body: "Body", Data: map[string]string{"messageId": "m1"}})
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)
 	}
-	if seenAuth != "Bearer test-access-token" {
-		t.Fatalf("authorization header = %q, want %q", seenAuth, "Bearer test-access-token")
+	if seenAuth != "Bearer test-api-key" {
+		t.Fatalf("authorization header = %q, want %q", seenAuth, "Bearer test-api-key")
+	}
+	if seenBody.Token != "device-token" || seenBody.Title != "Title" || seenBody.Body != "Body" {
+		t.Fatalf("unexpected relay body: %+v", seenBody)
+	}
+	if seenBody.Platform != "android" {
+		t.Fatalf("platform = %q, want %q", seenBody.Platform, "android")
+	}
+	if seenBody.Data["messageId"] != "m1" {
+		t.Fatalf("data messageId = %q, want %q", seenBody.Data["messageId"], "m1")
 	}
 }
 
-func TestFCMSenderSendReturnsStaleError(t *testing.T) {
+func TestRelaySenderSendReturnsStaleError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/token":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"access_token":"test-access-token","expires_in":3600}`))
-		case "/send":
+		if r.URL.Path != "/send" {
 			w.WriteHeader(http.StatusNotFound)
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"error":{"status":"NOT_FOUND","message":"Requested entity was not found.","details":[{"errorCode":"UNREGISTERED"}]}}`))
-		default:
-			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusGone)
+		_, _ = w.Write([]byte(`{"stale":true}`))
 	}))
 	defer ts.Close()
 
-	serviceAccountPath := writeTestServiceAccountFile(t, ts.URL+"/token")
-	t.Setenv("FCM_SERVICE_ACCOUNT_FILE", serviceAccountPath)
-	t.Setenv("FCM_PROJECT_ID", "demo-project")
-	t.Setenv("FCM_SEND_URL", ts.URL+"/send")
+	t.Setenv("PUSH_RELAY_URL", ts.URL)
+	t.Setenv("PUSH_RELAY_KEY", "test-api-key")
 
-	sender := newFCMSenderFromEnv(nil)
+	sender := newRelaySenderFromEnv(nil)
 	if sender == nil {
-		t.Fatal("newFCMSenderFromEnv(nil) returned nil")
+		t.Fatal("newRelaySenderFromEnv(nil) returned nil")
 	}
 	sender.client = ts.Client()
 
@@ -87,33 +82,16 @@ func TestFCMSenderSendReturnsStaleError(t *testing.T) {
 	}
 }
 
-func writeTestServiceAccountFile(t *testing.T, tokenURL string) string {
-	t.Helper()
-
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("rsa.GenerateKey: %v", err)
-	}
-	pkcs8, err := x509.MarshalPKCS8PrivateKey(privateKey)
-	if err != nil {
-		t.Fatalf("x509.MarshalPKCS8PrivateKey: %v", err)
-	}
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8})
-
-	payload := map[string]any{
-		"project_id":   "demo-project",
-		"private_key":  string(pemBytes),
-		"client_email": "demo@test.iam.gserviceaccount.com",
-		"token_uri":    tokenURL,
-	}
-	content, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("json.Marshal: %v", err)
+func TestNewRelaySenderFromEnvRequiresKey(t *testing.T) {
+	t.Setenv("PUSH_RELAY_URL", "https://relay.example")
+	t.Setenv("PUSH_RELAY_KEY", "")
+	if sender := newRelaySenderFromEnv(nil); sender != nil {
+		t.Fatal("newRelaySenderFromEnv should return nil when PUSH_RELAY_KEY is empty")
 	}
 
-	path := filepath.Join(t.TempDir(), "service-account.json")
-	if err := os.WriteFile(path, content, 0o600); err != nil {
-		t.Fatalf("os.WriteFile: %v", err)
+	t.Setenv("PUSH_RELAY_URL", "")
+	t.Setenv("PUSH_RELAY_KEY", "test-api-key")
+	if sender := newRelaySenderFromEnv(nil); sender != nil {
+		t.Fatal("newRelaySenderFromEnv should return nil when PUSH_RELAY_URL is empty")
 	}
-	return path
 }

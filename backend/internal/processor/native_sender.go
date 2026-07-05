@@ -3,22 +3,13 @@ package processor
 import (
 	"bytes"
 	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"llama-lab/backend/internal/logging"
@@ -26,10 +17,6 @@ import (
 )
 
 var ErrNativeDeviceStale = errors.New("native device token is stale")
-
-const (
-	fcmOAuthScope = "https://www.googleapis.com/auth/firebase.messaging"
-)
 
 type NativePushMessage struct {
 	Title string
@@ -43,30 +30,28 @@ type NativeSender interface {
 	Send(ctx context.Context, device state.NativeDevice, message NativePushMessage) error
 }
 
-type fcmSender struct {
-	projectID   string
-	tokenURL    string
-	sendURL     string
-	clientEmail string
-	privateKey  *rsa.PrivateKey
-	client      *http.Client
-	now         func() time.Time
-
-	mu               sync.Mutex
-	accessToken      string
-	accessTokenUntil time.Time
+// relaySender forwards native push requests to the central Cloudflare Worker
+// relay, which holds the single Firebase service account the published mobile
+// app is built against. Self-hosted servers never talk to FCM directly; they
+// authenticate to the relay with a per-server API key.
+type relaySender struct {
+	relayURL string
+	apiKey   string
+	client   *http.Client
 }
 
-type fcmServiceAccount struct {
-	ProjectID   string `json:"project_id"`
-	PrivateKey  string `json:"private_key"`
-	ClientEmail string `json:"client_email"`
-	TokenURI    string `json:"token_uri"`
+// relaySendRequest is the JSON body POSTed to the relay's /send endpoint.
+type relaySendRequest struct {
+	Token    string            `json:"token"`
+	Title    string            `json:"title"`
+	Body     string            `json:"body"`
+	Data     map[string]string `json:"data,omitempty"`
+	Platform string            `json:"platform,omitempty"`
 }
 
 func NewNativeSendersFromEnv(log *logging.Logger) []NativeSender {
 	out := make([]NativeSender, 0, 1)
-	if sender := newFCMSenderFromEnv(log); sender != nil {
+	if sender := newRelaySenderFromEnv(log); sender != nil {
 		out = append(out, sender)
 	}
 	return out
@@ -76,75 +61,32 @@ func logNativeSenderError(log *logging.Logger, reason, detail string) {
 	if log == nil {
 		return
 	}
-	log.Error("fcm native sender not configured", "reason", reason, "detail", detail)
+	log.Error("native push relay not configured", "reason", reason, "detail", detail)
 }
 
-func newFCMSenderFromEnv(log *logging.Logger) *fcmSender {
-	serviceAccountPath := strings.TrimSpace(os.Getenv("FCM_SERVICE_ACCOUNT_FILE"))
-	if serviceAccountPath == "" {
+func newRelaySenderFromEnv(log *logging.Logger) *relaySender {
+	relayURL := strings.TrimRight(strings.TrimSpace(os.Getenv("PUSH_RELAY_URL")), "/")
+	if relayURL == "" {
+		return nil
+	}
+	apiKey := strings.TrimSpace(os.Getenv("PUSH_RELAY_KEY"))
+	if apiKey == "" {
+		logNativeSenderError(log, "PUSH_RELAY_KEY missing", "set PUSH_RELAY_KEY to the per-server API key issued by the relay operator")
 		return nil
 	}
 
-	serviceAccountData, err := os.ReadFile(serviceAccountPath)
-	if err != nil {
-		logNativeSenderError(log, "failed to read FCM_SERVICE_ACCOUNT_FILE", fmt.Sprintf("path=%s error=%s", serviceAccountPath, err.Error()))
-		return nil
-	}
-
-	var sa fcmServiceAccount
-	if err := json.Unmarshal(serviceAccountData, &sa); err != nil {
-		logNativeSenderError(log, "failed to parse FCM_SERVICE_ACCOUNT_FILE as JSON", fmt.Sprintf("path=%s error=%s", serviceAccountPath, err.Error()))
-		return nil
-	}
-	clientEmail := strings.TrimSpace(sa.ClientEmail)
-	if clientEmail == "" {
-		logNativeSenderError(log, "FCM service account JSON missing client_email", fmt.Sprintf("path=%s", serviceAccountPath))
-		return nil
-	}
-	privateKey, err := parseFCMPrivateKey(sa.PrivateKey)
-	if err != nil {
-		logNativeSenderError(log, "failed to parse FCM service account private_key", fmt.Sprintf("path=%s error=%s", serviceAccountPath, err.Error()))
-		return nil
-	}
-
-	projectID := strings.TrimSpace(os.Getenv("FCM_PROJECT_ID"))
-	if projectID == "" {
-		projectID = strings.TrimSpace(sa.ProjectID)
-	}
-	if projectID == "" {
-		logNativeSenderError(log, "FCM project id missing", "set FCM_PROJECT_ID or include project_id in the service account JSON")
-		return nil
-	}
-
-	tokenURL := strings.TrimSpace(os.Getenv("FCM_TOKEN_URL"))
-	if tokenURL == "" {
-		tokenURL = strings.TrimSpace(sa.TokenURI)
-	}
-	if tokenURL == "" {
-		tokenURL = "https://oauth2.googleapis.com/token"
-	}
-
-	sendURL := strings.TrimSpace(os.Getenv("FCM_SEND_URL"))
-	if sendURL == "" {
-		sendURL = fmt.Sprintf("https://fcm.googleapis.com/v1/projects/%s/messages:send", projectID)
-	}
-
-	return &fcmSender{
-		projectID:   projectID,
-		tokenURL:    tokenURL,
-		sendURL:     sendURL,
-		clientEmail: clientEmail,
-		privateKey:  privateKey,
-		client:      &http.Client{Timeout: 15 * time.Second},
-		now:         time.Now,
+	return &relaySender{
+		relayURL: relayURL,
+		apiKey:   apiKey,
+		client:   &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
-func (s *fcmSender) Name() string {
-	return "fcm"
+func (s *relaySender) Name() string {
+	return "relay"
 }
 
-func (s *fcmSender) Supports(platform string) bool {
+func (s *relaySender) Supports(platform string) bool {
 	switch strings.ToLower(strings.TrimSpace(platform)) {
 	case "", "android", "ios":
 		return true
@@ -153,39 +95,29 @@ func (s *fcmSender) Supports(platform string) bool {
 	}
 }
 
-func (s *fcmSender) Send(ctx context.Context, device state.NativeDevice, message NativePushMessage) error {
+func (s *relaySender) Send(ctx context.Context, device state.NativeDevice, message NativePushMessage) error {
 	registrationToken := strings.TrimSpace(device.PushToken)
 	if registrationToken == "" {
 		return errors.New("missing push token")
 	}
-	accessToken, err := s.oauthToken(ctx)
+
+	body, err := json.Marshal(relaySendRequest{
+		Token:    registrationToken,
+		Title:    message.Title,
+		Body:     message.Body,
+		Data:     message.Data,
+		Platform: device.Platform,
+	})
 	if err != nil {
 		return err
 	}
 
-	payload := map[string]any{
-		"message": map[string]any{
-			"token": registrationToken,
-			"notification": map[string]any{
-				"title": message.Title,
-				"body":  message.Body,
-			},
-			"data": message.Data,
-			"android": map[string]any{
-				"priority": "HIGH",
-			},
-		},
-	}
-	body, err := json.Marshal(payload)
+	sendURL := s.relayURL + "/send"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sendURL, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.sendURL, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Authorization", "Bearer "+s.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.client.Do(req)
@@ -196,114 +128,13 @@ func (s *fcmSender) Send(ctx context.Context, device state.NativeDevice, message
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 	trimmed := strings.TrimSpace(string(respBody))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if isFCMStaleResponse(resp.StatusCode, trimmed) {
-			return fmt.Errorf("%w: status=%d response=%s", ErrNativeDeviceStale, resp.StatusCode, trimmed)
-		}
-		return fmt.Errorf("fcm send failed: status=%d response=%s", resp.StatusCode, trimmed)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
 	}
-	return nil
-}
-
-func (s *fcmSender) oauthToken(ctx context.Context) (string, error) {
-	if s.now == nil {
-		s.now = time.Now
+	if isRelayStaleResponse(resp.StatusCode, trimmed) {
+		return fmt.Errorf("%w: status=%d response=%s", ErrNativeDeviceStale, resp.StatusCode, trimmed)
 	}
-	now := s.now().UTC()
-
-	s.mu.Lock()
-	if s.accessToken != "" && now.Before(s.accessTokenUntil.Add(-1*time.Minute)) {
-		token := s.accessToken
-		s.mu.Unlock()
-		return token, nil
-	}
-	s.mu.Unlock()
-
-	token, expiresAt, err := s.requestOAuthToken(ctx, now)
-	if err != nil {
-		return "", err
-	}
-
-	s.mu.Lock()
-	s.accessToken = token
-	s.accessTokenUntil = expiresAt
-	s.mu.Unlock()
-	return token, nil
-}
-
-func (s *fcmSender) requestOAuthToken(ctx context.Context, now time.Time) (string, time.Time, error) {
-	assertion, err := signServiceAccountAssertion(s.clientEmail, s.privateKey, s.tokenURL, now)
-	if err != nil {
-		return "", time.Time{}, err
-	}
-
-	form := url.Values{}
-	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
-	form.Set("assertion", assertion)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.tokenURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", time.Time{}, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return "", time.Time{}, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
-	trimmed := strings.TrimSpace(string(body))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", time.Time{}, fmt.Errorf("fcm oauth failed: status=%d response=%s", resp.StatusCode, trimmed)
-	}
-
-	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int64  `json:"expires_in"`
-	}
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return "", time.Time{}, fmt.Errorf("fcm oauth decode failed: %w", err)
-	}
-	token := strings.TrimSpace(tokenResp.AccessToken)
-	if token == "" {
-		return "", time.Time{}, errors.New("fcm oauth token missing")
-	}
-	expiresIn := tokenResp.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 3600
-	}
-	return token, now.Add(time.Duration(expiresIn) * time.Second), nil
-}
-
-func signServiceAccountAssertion(clientEmail string, privateKey *rsa.PrivateKey, tokenURL string, now time.Time) (string, error) {
-	headerJSON, err := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT"})
-	if err != nil {
-		return "", err
-	}
-	claimsJSON, err := json.Marshal(map[string]any{
-		"iss":   clientEmail,
-		"scope": fcmOAuthScope,
-		"aud":   tokenURL,
-		"iat":   now.Unix(),
-		"exp":   now.Add(time.Hour).Unix(),
-	})
-	if err != nil {
-		return "", err
-	}
-
-	encodedHeader := base64.RawURLEncoding.EncodeToString(headerJSON)
-	encodedClaims := base64.RawURLEncoding.EncodeToString(claimsJSON)
-	signingInput := encodedHeader + "." + encodedClaims
-
-	hash := sha256.Sum256([]byte(signingInput))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, hash[:])
-	if err != nil {
-		return "", err
-	}
-
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return fmt.Errorf("push relay send failed: status=%d response=%s", resp.StatusCode, trimmed)
 }
 
 func SelectNativeSender(senders []NativeSender, platform string) NativeSender {
@@ -315,29 +146,18 @@ func SelectNativeSender(senders []NativeSender, platform string) NativeSender {
 	return nil
 }
 
-func parseFCMPrivateKey(privateKeyPEM string) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(strings.TrimSpace(privateKeyPEM)))
-	if block == nil {
-		return nil, errors.New("fcm private key pem block missing")
+// isRelayStaleResponse reports whether the relay signalled that the device
+// token is no longer registered. The relay returns HTTP 410 with
+// {"stale":true} for unregistered tokens; we also match the underlying FCM
+// wording defensively in case it is surfaced verbatim.
+func isRelayStaleResponse(statusCode int, response string) bool {
+	if statusCode == http.StatusGone {
+		return true
 	}
-
-	if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
-		rsaKey, ok := key.(*rsa.PrivateKey)
-		if !ok {
-			return nil, errors.New("fcm private key is not RSA")
-		}
-		return rsaKey, nil
-	}
-
-	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
-		return key, nil
-	}
-
-	return nil, errors.New("unsupported fcm private key format")
-}
-
-func isFCMStaleResponse(statusCode int, response string) bool {
 	lower := strings.ToLower(response)
+	if strings.Contains(lower, `"stale":true`) || strings.Contains(lower, `"stale": true`) {
+		return true
+	}
 	if strings.Contains(lower, "unregistered") || strings.Contains(lower, "notregistered") || strings.Contains(lower, "registration-token-not-registered") {
 		return true
 	}

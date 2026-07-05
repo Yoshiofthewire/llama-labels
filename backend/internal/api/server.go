@@ -1041,7 +1041,7 @@ func (s *Server) handleNotificationTest(w http.ResponseWriter, r *http.Request) 
 	nativeRemoved := 0
 	nativeError := ""
 	if len(nativeDevices) > 0 && len(s.nativeSenders) == 0 {
-		nativeError = "no native push sender configured on the server (set FCM_SERVICE_ACCOUNT_FILE and FCM_PROJECT_ID)"
+		nativeError = "no native push sender configured on the server (set PUSH_RELAY_URL and PUSH_RELAY_KEY)"
 		s.logger.Error("test native notification skipped", "reason", nativeError, "devices", strconv.Itoa(len(nativeDevices)))
 	} else if len(nativeDevices) > 0 {
 		nativeMessage := processor.NativePushMessage{

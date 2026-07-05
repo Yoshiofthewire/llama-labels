@@ -1,0 +1,21 @@
+name = "llama-labels-push-relay"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# KV namespaces. Create these with:
+#   npx wrangler kv namespace create API_KEYS
+#   npx wrangler kv namespace create OAUTH_CACHE
+# then paste the returned ids below.
+[[kv_namespaces]]
+binding = "API_KEYS"
+id = "REPLACE_WITH_API_KEYS_NAMESPACE_ID"
+
+[[kv_namespaces]]
+binding = "OAUTH_CACHE"
+id = "REPLACE_WITH_OAUTH_CACHE_NAMESPACE_ID"
+
+# Secrets (set with `npx wrangler secret put <NAME>`, never commit them):
+#   FCM_CLIENT_EMAIL   - client_email from the Firebase service-account JSON
+#   FCM_PRIVATE_KEY    - private_key from the service-account JSON (PEM, keep the newlines)
+#   FCM_PROJECT_ID     - project_id from the service-account JSON
+#   ADMIN_SECRET       - random secret guarding the /admin/keys endpoints

@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+dist/
+*.log
+
+# Real config with live KV namespace ids — copy from wrangler.toml.example
+wrangler.toml

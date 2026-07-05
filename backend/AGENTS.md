@@ -111,10 +111,8 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 | `IMAP_CONFIG_KEY_FILE` | `$SECRET_DIR/imap-config.key` | AES key for IMAP credentials |
 | `SERVER_BASE_URL` | empty | Public backend URL embedded in mobile pairing QR (`srv`) and used to build register endpoint (`reg`) |
 | `PAIRING_SECRET` | empty | HMAC secret used to sign and validate short-lived mobile pairing tokens |
-| `FCM_SERVICE_ACCOUNT_FILE` | empty | Optional path to Firebase service-account JSON for direct backend native push delivery via FCM HTTP v1 |
-| `FCM_PROJECT_ID` | empty | Optional project override; defaults to service-account `project_id` |
-| `FCM_TOKEN_URL` | token URI from service-account | Optional OAuth token endpoint override for test/proxy environments |
-| `FCM_SEND_URL` | `https://fcm.googleapis.com/v1/projects/<project>/messages:send` | Optional FCM HTTP v1 send endpoint override for test/proxy environments |
+| `PUSH_RELAY_URL` | empty | Base URL of the central push relay (Cloudflare Worker) that delivers native push to FCM. When set with `PUSH_RELAY_KEY`, enables native push |
+| `PUSH_RELAY_KEY` | empty | Per-server API key issued by the relay operator; sent as `Authorization: Bearer` to the relay |
 
 ### Key Data Files
 
