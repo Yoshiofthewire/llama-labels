@@ -2,9 +2,6 @@ package imap
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"llama-lab/backend/internal/cryptutil"
 
 	goimap "github.com/BrianLeishman/go-imap"
 )
@@ -116,12 +115,6 @@ type storedIMAPConfig struct {
 	Mailbox  string `json:"mailbox"`
 }
 
-type encryptedPayload struct {
-	Version    int    `json:"version"`
-	Nonce      string `json:"nonce"`
-	Ciphertext string `json:"ciphertext"`
-}
-
 // NewAPIClientFromStoredConfig builds a client that loads its credentials
 // from a specific encrypted config file (per-user), never from env vars.
 func NewAPIClientFromStoredConfig(configPath, configKeyPath string) *APIClient {
@@ -208,45 +201,19 @@ func (c *APIClient) ensureCredentialsFromStoredConfigLocked() error {
 }
 
 func decryptStoredPayload(raw []byte, keyPath string) ([]byte, error) {
-	var env encryptedPayload
-	if err := json.Unmarshal(raw, &env); err != nil || env.Version != 1 || strings.TrimSpace(env.Nonce) == "" || strings.TrimSpace(env.Ciphertext) == "" {
+	env, ok := cryptutil.ParseEnvelope(raw)
+	if !ok {
 		// Backward-compatibility with plaintext credentials.
 		return raw, nil
 	}
 
-	keyRaw, err := os.ReadFile(keyPath)
+	// imap never creates the master key — only the api process does; a
+	// missing key here is an error, not a reason to generate a new one.
+	key, err := cryptutil.LoadKey(keyPath)
 	if err != nil {
 		return nil, err
 	}
-	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(keyRaw)))
-	if err != nil {
-		return nil, err
-	}
-	if len(key) != 32 {
-		return nil, errors.New("invalid encryption master key length")
-	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce, err := base64.StdEncoding.DecodeString(env.Nonce)
-	if err != nil {
-		return nil, err
-	}
-	ciphertext, err := base64.StdEncoding.DecodeString(env.Ciphertext)
-	if err != nil {
-		return nil, err
-	}
-	plain, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, err
-	}
-	return plain, nil
+	return cryptutil.Open(env, key)
 }
 
 // overviewFromEmail builds an Overview from a go-imap *Email, parsing IMAP

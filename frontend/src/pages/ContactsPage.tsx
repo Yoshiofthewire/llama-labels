@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { toErrorMessage } from "../api/client";
 import {
   createContact,
@@ -8,6 +8,8 @@ import {
   type Contact,
   type ContactInput
 } from "../api/contacts";
+import { usePagination } from "../hooks/usePagination";
+import { PageTabs } from "../components/PageTabs";
 
 type FormState = {
   fn: string;
@@ -106,7 +108,6 @@ export function ContactsPage() {
   const [saving, setSaving] = useState(false);
 
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
   const [formOpen, setFormOpen] = useState(false);
 
   const contactDialogRef = useRef<HTMLDialogElement | null>(null);
@@ -115,11 +116,10 @@ export function ContactsPage() {
   const statusTone = status.toLowerCase().includes("failed") ? "notice notice-error" : "notice notice-success";
   const editingContact = editingUid ? contacts.find((c) => c.uid === editingUid) ?? null : null;
 
-  const totalPages = Math.max(1, Math.ceil(contacts.length / CONTACTS_PER_PAGE));
-  const pageContacts = useMemo(() => {
-    const start = (currentPage - 1) * CONTACTS_PER_PAGE;
-    return contacts.slice(start, start + CONTACTS_PER_PAGE);
-  }, [currentPage, contacts]);
+  const { currentPage, setCurrentPage, totalPages, pageItems: pageContacts } = usePagination(
+    contacts,
+    CONTACTS_PER_PAGE
+  );
 
   async function loadContacts(): Promise<Contact[]> {
     const next = await listContacts();
@@ -141,12 +141,6 @@ export function ContactsPage() {
   useEffect(() => {
     void refresh();
   }, []);
-
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    }
-  }, [currentPage, totalPages]);
 
   useEffect(() => {
     const dialog = contactDialogRef.current;
@@ -279,22 +273,13 @@ export function ContactsPage() {
 
         {!loading && contacts.length > 0 ? (
           <>
-            {totalPages > 1 ? (
-              <div className="contacts-page-tabs" role="tablist" aria-label="Contact pages">
-                {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((page) => (
-                  <button
-                    key={page}
-                    type="button"
-                    role="tab"
-                    aria-selected={currentPage === page}
-                    onClick={() => setCurrentPage(page)}
-                    className={`contacts-page-tab ${currentPage === page ? "active" : ""}`}
-                  >
-                    {page}
-                  </button>
-                ))}
-              </div>
-            ) : null}
+            <PageTabs
+              totalPages={totalPages}
+              currentPage={currentPage}
+              onSelect={setCurrentPage}
+              classPrefix="contacts"
+              ariaLabel="Contact pages"
+            />
 
             <div className="contacts-table-wrap">
               <div className="contacts-table-scroll">

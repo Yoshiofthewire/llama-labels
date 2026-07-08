@@ -32,9 +32,9 @@ func Run(args []string) error {
 	}
 
 	paths := config.Paths{
-		ConfigFile: filepath.Join(envOrDefault("CONFIG_DIR", "/llama_lab/config"), "config.yaml"),
-		StateDir:   envOrDefault("STATE_DIR", "/llama_lab/state"),
-		LogDir:     envOrDefault("LOG_DIR", "/llama_lab/logs"),
+		ConfigFile: filepath.Join(config.EnvOrDefault("CONFIG_DIR", "/llama_lab/config"), "config.yaml"),
+		StateDir:   config.EnvOrDefault("STATE_DIR", "/llama_lab/state"),
+		LogDir:     config.EnvOrDefault("LOG_DIR", "/llama_lab/logs"),
 	}
 
 	// Capture legacy notification prefs before LoadOrInit rewrites
@@ -61,7 +61,7 @@ func Run(args []string) error {
 		}
 	}
 
-	logger, err := logging.New(paths.LogDir, cfg.LogLevel)
+	logger, err := logging.New(paths.LogDir)
 	if err != nil {
 		return fmt.Errorf("create logger: %w", err)
 	}
@@ -72,7 +72,7 @@ func Run(args []string) error {
 		return fmt.Errorf("create state store: %w", err)
 	}
 
-	configDir := envOrDefault("CONFIG_DIR", "/llama_lab/config")
+	configDir := config.EnvOrDefault("CONFIG_DIR", "/llama_lab/config")
 	usersStore, err := users.LoadOrMigrate(configDir, filepath.Join(configDir, "admin.env"))
 	if err != nil {
 		return fmt.Errorf("load users store: %w", err)
@@ -184,13 +184,6 @@ func envDurationSeconds(name string, fallback int) int {
 	return v
 }
 
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
 func monitorHealth(logger *logging.Logger, healthSvc *health.Service) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -214,7 +207,7 @@ func monitorHealth(logger *logging.Logger, healthSvc *health.Service) {
 // env-only deployments keep working. The persisted legacy config default
 // ("http://127.0.0.1:3333" with path "/") predates the Ollama runtime and
 // is treated as unset.
-func newLlamaClient(cfg config.Config) llama.Client {
+func newLlamaClient(cfg config.Config) *llama.HTTPClient {
 	const legacyDeadDefault = "http://127.0.0.1:3333"
 
 	baseURL := strings.TrimSpace(cfg.Llama.BaseURL)
@@ -251,39 +244,17 @@ func newLlamaClient(cfg config.Config) llama.Client {
 	return llama.NewHTTPClient(baseURL, apiKey, classifyPath, tuning, 3*time.Minute)
 }
 
-func warmupLlamaOnStartup(logger *logging.Logger, client llama.Client, trigger interface{ TriggerNow() }) {
-	type warmupClient interface {
-		Warmup(ctx context.Context) error
-	}
-
-	w, ok := client.(warmupClient)
-	if !ok {
-		// No warmup needed; trigger the first sweep immediately.
-		if trigger != nil {
-			go trigger.TriggerNow()
-		}
-		return
-	}
-
+func warmupLlamaOnStartup(logger *logging.Logger, client *llama.HTTPClient, poller *processor.Poller) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		logger.Info("llama startup warmup requested")
-		if err := w.Warmup(ctx); err != nil {
+		if err := client.Warmup(ctx); err != nil {
 			logger.Error("llama startup warmup failed", "error", err.Error())
 			return
 		}
 		logger.Info("llama startup warmup completed")
-		if trigger != nil {
-			logger.Info("processing unread unlabeled mail after startup warmup")
-			type unreadSweepTrigger interface {
-				TriggerUnreadSweep()
-			}
-			if sweep, ok := trigger.(unreadSweepTrigger); ok {
-				sweep.TriggerUnreadSweep()
-				return
-			}
-			trigger.TriggerNow()
-		}
+		logger.Info("processing unread unlabeled mail after startup warmup")
+		poller.TriggerUnreadSweep()
 	}()
 }

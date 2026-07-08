@@ -6,6 +6,8 @@
  * secrets; the short-lived Google access token is cached in KV.
  */
 
+import { base64UrlEncode, base64UrlEncodeString } from "../../push-relay-shared/base64url";
+
 const FCM_OAUTH_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const OAUTH_CACHE_KEY = "google_access_token";
@@ -28,19 +30,6 @@ export type FcmResult =
   | { ok: true }
   | { ok: false; stale: true; status: number; detail: string }
   | { ok: false; stale: false; status: number; detail: string };
-
-function base64UrlEncode(bytes: ArrayBuffer | Uint8Array): string {
-  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  let binary = "";
-  for (let i = 0; i < arr.length; i++) {
-    binary += String.fromCharCode(arr[i]);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function base64UrlEncodeString(input: string): string {
-  return base64UrlEncode(new TextEncoder().encode(input));
-}
 
 /**
  * Import a PKCS8 PEM RSA private key for RS256 signing.

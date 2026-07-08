@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"llama-lab/backend/internal/contacts"
+	"llama-lab/backend/internal/fsutil"
 	"llama-lab/backend/internal/users"
 )
 
@@ -171,7 +172,7 @@ func (s *Server) writeDAVPassword(userID string, f davPasswordFile) error {
 	if err != nil {
 		return err
 	}
-	return atomicWritePrivateFile(s.userCardDAVAuthPath(userID), b)
+	return fsutil.AtomicWriteFile(s.userCardDAVAuthPath(userID), b, 0o600)
 }
 
 // handleContactsDAVPassword manages the caller's app-specific CardDAV

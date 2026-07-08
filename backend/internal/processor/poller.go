@@ -3,9 +3,7 @@ package processor
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,10 +19,9 @@ import (
 	"llama-lab/backend/internal/logging"
 	"llama-lab/backend/internal/mailcache"
 	"llama-lab/backend/internal/redaction"
+	"llama-lab/backend/internal/retry"
 	"llama-lab/backend/internal/state"
 	"llama-lab/backend/internal/users"
-
-	"github.com/SherClockHolmes/webpush-go"
 )
 
 // maxConcurrentUserTicks bounds how many user mailboxes are polled in
@@ -47,7 +44,7 @@ type Poller struct {
 	// the one shared LLM backend. Per-user mailbox state lives in stores.
 	globalStore          *state.Store
 	health               *health.Service
-	llama                llama.Client
+	llama                *llama.HTTPClient
 	redaction            *redaction.Engine
 	nativePushDispatcher *NativePushDispatcher
 	cancel               context.CancelFunc
@@ -79,7 +76,7 @@ type userCtx struct {
 	settings config.UserNotificationSettings
 }
 
-func New(cfg config.Config, log *logging.Logger, globalStore *state.Store, usersStore *users.Store, stateDir, configDir string, healthSvc *health.Service, llamaClient llama.Client) (*Poller, error) {
+func New(cfg config.Config, log *logging.Logger, globalStore *state.Store, usersStore *users.Store, stateDir, configDir string, healthSvc *health.Service, llamaClient *llama.HTTPClient) (*Poller, error) {
 	re, err := redaction.New(cfg.Redaction.Patterns)
 	if err != nil {
 		return nil, err
@@ -95,7 +92,7 @@ func New(cfg config.Config, log *logging.Logger, globalStore *state.Store, users
 		nativePushDispatcher: NewNativePushDispatcher(log),
 		stateDir:             stateDir,
 		configDir:            configDir,
-		imapKeyPath:          envOrDefaultProc("IMAP_CONFIG_KEY_FILE", "/llama_lab/private/imap-config.key"),
+		imapKeyPath:          config.EnvOrDefault("IMAP_CONFIG_KEY_FILE", "/llama_lab/private/imap-config.key"),
 		stores:               map[string]*state.Store{},
 		mailClients:          map[string]*mailClientEntry{},
 		mailCaches:           map[string]*mailcache.Store{},
@@ -104,13 +101,6 @@ func New(cfg config.Config, log *logging.Logger, globalStore *state.Store, users
 	p.tickSem = make(chan struct{}, 1)
 	p.tickSem <- struct{}{}
 	return p, nil
-}
-
-func envOrDefaultProc(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
 }
 
 func (p *Poller) userStateDir(userID string) string {
@@ -642,12 +632,6 @@ func (p *Poller) maybeSendPushNotification(uc userCtx, msg imapadapter.Message, 
 		return
 	}
 
-	privateKey, err := config.LoadVAPIDPrivateKey(privateKeyPath)
-	if err != nil {
-		p.log.Error("failed to load notification private key", "error", err.Error())
-		return
-	}
-
 	title := "New Email"
 	body := buildNotificationBody(msg)
 	payloadBytes, err := json.Marshal(map[string]any{
@@ -661,55 +645,20 @@ func (p *Poller) maybeSendPushNotification(uc userCtx, msg imapadapter.Message, 
 		return
 	}
 
-	options := &webpush.Options{
-		Subscriber:      "mailto:noreply@localhost",
-		VAPIDPublicKey:  publicKey,
-		VAPIDPrivateKey: privateKey,
-		TTL:             300,
-	}
-
-	sent := 0
-	failed := 0
-	staleEndpoints := []string{}
-	for _, sub := range subs {
-		resp, err := webpush.SendNotification(payloadBytes, &webpush.Subscription{
-			Endpoint: sub.Endpoint,
-			Keys: webpush.Keys{
-				Auth:   sub.Auth,
-				P256dh: sub.P256DH,
-			},
-		}, options)
-		if err != nil {
-			failed++
-			continue
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode == http.StatusCreated {
-			sent++
-			continue
-		}
-		failed++
-		if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
-			staleEndpoints = append(staleEndpoints, sub.Endpoint)
-		}
-	}
-
-	removed := 0
-	for _, endpoint := range staleEndpoints {
-		ok, err := uc.store.RemoveNotificationSubscription(endpoint)
-		if err == nil && ok {
-			removed++
-		}
+	outcome, err := SendWebPush(uc.store, publicKey, privateKeyPath, 300, payloadBytes)
+	if err != nil {
+		p.log.Error("failed to load notification private key", "error", err.Error())
+		return
 	}
 
 	p.log.Info(
 		"new-email push notification attempt",
 		"user_id", uc.id,
 		"message_id", msg.ID,
-		"subscriptions", strconv.Itoa(len(subs)),
-		"sent", strconv.Itoa(sent),
-		"failed", strconv.Itoa(failed),
-		"removed_stale", strconv.Itoa(removed),
+		"subscriptions", strconv.Itoa(outcome.Subscriptions),
+		"sent", strconv.Itoa(outcome.Sent),
+		"failed", strconv.Itoa(outcome.Failed),
+		"removed_stale", strconv.Itoa(outcome.Removed),
 	)
 }
 
@@ -726,10 +675,33 @@ func (p *Poller) maybeSendNativePushNotification(uc userCtx, msg imapadapter.Mes
 	title, body := buildNativeNotificationText(msg)
 	data := buildNativePushData(msg, messageKeywords, title, body)
 
+	// title/body are duplicated into data so a mobile client that renders its
+	// own notification from the data payload shows the sender and subject
+	// instead of a generic fallback.
+	notification := NativePushMessage{Title: title, Body: body, Data: data}
+
+	outcome, err := SendNativePush(context.Background(), p.nativePushDispatcher, p.health, uc.store, notification, func(device state.NativeDevice, platform string, sendErr error) {
+		// TODO(server-side management): a failed send (relay unreachable,
+		// upstream 5xx, or a 429 when the relay's per-server rate limit is
+		// exceeded) currently drops the push — the email still syncs in-app,
+		// but no notification fires. Add server-side handling: honor the
+		// relay's Retry-After, queue and re-attempt over-limit / transient
+		// failures with backoff, and surface persistent failures to the user.
+		p.log.Error(
+			"native notification failed",
+			"user_id", uc.id,
+			"message_id", msg.ID,
+			"device_id", strings.TrimSpace(device.DeviceID),
+			"platform", platform,
+			"sender", "relay",
+			"error", sendErr.Error(),
+		)
+	})
+
 	// App Pull mode bypasses the relay and Firebase: queue the notification
 	// server-side for the paired device to fetch over plain HTTP.
-	if uc.store.NativeDeliveryMode() == state.DeliveryModePull {
-		if err := uc.store.EnqueuePullNotification(state.PullNotification{Title: title, Body: body, Data: data}); err != nil {
+	if outcome.Queued {
+		if err != nil {
 			p.log.Error("failed to queue native pull notification", "user_id", uc.id, "message_id", msg.ID, "error", err.Error())
 			return
 		}
@@ -737,84 +709,14 @@ func (p *Poller) maybeSendNativePushNotification(uc userCtx, msg imapadapter.Mes
 		return
 	}
 
-	// title/body are duplicated into data so a mobile client that renders its
-	// own notification from the data payload shows the sender and subject
-	// instead of a generic fallback.
-	notification := NativePushMessage{Title: title, Body: body, Data: data}
-
-	sent := 0
-	failed := 0
-	removed := 0
-	// Track relay health per platform. A response from the relay (success or stale
-	// token) means the relay answered; only non-stale errors mean the relay is failing.
-	relayResponded := make(map[string]bool) // platform -> responded
-	relayFailure := make(map[string]string) // platform -> failure reason
-	for _, device := range devices {
-		platform := strings.ToLower(strings.TrimSpace(device.Platform))
-		if platform == "" {
-			platform = "android" // default for unknown/empty
-		}
-
-		sendCtx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		err := p.nativePushDispatcher.Send(sendCtx, device, notification)
-		cancel()
-		if err != nil {
-			failed++
-			// TODO(server-side management): a failed send (relay unreachable,
-			// upstream 5xx, or a 429 when the relay's per-server rate limit is
-			// exceeded) currently drops the push — the email still syncs in-app,
-			// but no notification fires. Add server-side handling: honor the
-			// relay's Retry-After, queue and re-attempt over-limit / transient
-			// failures with backoff, and surface persistent failures to the user.
-			if errors.Is(err, ErrNativeDeviceStale) {
-				// The relay responded (410 stale) — that is a healthy relay
-				// pruning a dead token, not a relay failure.
-				relayResponded[platform] = true
-				if strings.TrimSpace(device.DeviceID) != "" {
-					ok, rmErr := uc.store.RemoveNativeDevice(device.DeviceID)
-					if rmErr == nil && ok {
-						removed++
-					}
-				}
-			} else {
-				// Prefix the failure reason with the platform for diagnostics
-				relayFailure[platform] = fmt.Sprintf("[%s] %s", platform, err.Error())
-			}
-			p.log.Error(
-				"native notification failed",
-				"user_id", uc.id,
-				"message_id", msg.ID,
-				"device_id", strings.TrimSpace(device.DeviceID),
-				"platform", platform,
-				"sender", "relay",
-				"error", err.Error(),
-			)
-			continue
-		}
-
-		relayResponded[platform] = true
-		sent++
-	}
-
-	// Update health per platform: record failures once per platform that failed,
-	// and successes for platforms that responded without failure.
-	for _, failure := range relayFailure {
-		p.health.RecordNativePushFailure(failure)
-	}
-	for platform := range relayResponded {
-		if _, hasFailed := relayFailure[platform]; !hasFailed {
-			p.health.RecordNativePushSuccess()
-		}
-	}
-
 	p.log.Info(
 		"new-email native notification attempt",
 		"user_id", uc.id,
 		"message_id", msg.ID,
-		"devices", strconv.Itoa(len(devices)),
-		"sent", strconv.Itoa(sent),
-		"failed", strconv.Itoa(failed),
-		"removed_stale", strconv.Itoa(removed),
+		"devices", strconv.Itoa(outcome.Devices),
+		"sent", strconv.Itoa(outcome.Sent),
+		"failed", strconv.Itoa(outcome.Failed),
+		"removed_stale", strconv.Itoa(outcome.Removed),
 	)
 }
 
@@ -901,26 +803,23 @@ func buildNativePushData(msg imapadapter.Message, messageKeywords []string, titl
 	}
 }
 
-func classifyWithRetry(ctx context.Context, c llama.Client, labels []string, sender, subject, body, tuning string) (string, error) {
-	var out string
-	var err error
-	for i := 0; i < 3; i++ {
-		out, err = c.Classify(ctx, labels, sender, subject, body, tuning)
+func classifyWithRetry(ctx context.Context, c *llama.HTTPClient, labels []string, sender, subject, body, tuning string) (string, error) {
+	return retry.Loop(ctx, 3, func(attempt int) time.Duration {
+		return 5 * time.Second
+	}, func(attempt int) (string, error, bool) {
+		out, err := c.Classify(ctx, labels, sender, subject, body, tuning)
 		if err == nil && out != "" {
-			return out, nil
+			return out, nil, false
 		}
 		if err != nil && isPermanentLlamaClassifyError(err) {
-			return "", err
+			return "", err, false
 		}
 		if err == nil {
 			// Classify returned no error but an empty label — treat as retryable.
 			err = fmt.Errorf("llama returned empty label")
 		}
-		if i < 2 {
-			time.Sleep(5 * time.Second)
-		}
-	}
-	return "", err
+		return "", err, true
+	})
 }
 
 func isPermanentLlamaClassifyError(err error) bool {
@@ -992,19 +891,18 @@ func applyKeywordsWithRetry(ctx context.Context, c imapadapter.Client, messageID
 }
 
 func applySingleKeywordWithRetry(ctx context.Context, c imapadapter.Client, messageID, keyword string) error {
-	var err error
-	for i := 0; i < 3; i++ {
-		err = c.EnsureLabel(ctx, keyword)
+	_, err := retry.Loop(ctx, 3, func(attempt int) time.Duration {
+		return 30 * time.Second
+	}, func(attempt int) (struct{}, error, bool) {
+		err := c.EnsureLabel(ctx, keyword)
 		if err == nil {
 			err = c.ApplyLabel(ctx, messageID, keyword)
 		}
 		if err == nil {
-			return nil
+			return struct{}{}, nil, false
 		}
-		if i < 2 {
-			time.Sleep(30 * time.Second)
-		}
-	}
+		return struct{}{}, err, true
+	})
 	return err
 }
 

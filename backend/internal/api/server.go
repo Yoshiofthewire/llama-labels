@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -35,6 +33,7 @@ import (
 	"llama-lab/backend/internal/adapters/llama"
 	"llama-lab/backend/internal/config"
 	"llama-lab/backend/internal/contacts"
+	"llama-lab/backend/internal/cryptutil"
 	"llama-lab/backend/internal/fsutil"
 	"llama-lab/backend/internal/health"
 	"llama-lab/backend/internal/logging"
@@ -44,7 +43,6 @@ import (
 	"llama-lab/backend/internal/users"
 
 	goimap "github.com/BrianLeishman/go-imap"
-	"github.com/SherClockHolmes/webpush-go"
 )
 
 // Session tracks who a live session token belongs to. Role is deliberately
@@ -93,10 +91,10 @@ type Server struct {
 }
 
 func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Service, usersStore *users.Store, onConfigUpdated func(config.Config)) *Server {
-	configDir := envOrDefault("CONFIG_DIR", "/llama_lab/config")
-	stateDir := envOrDefault("STATE_DIR", "/llama_lab/state")
-	logPath := filepath.Join(envOrDefault("LOG_DIR", "/llama_lab/logs"), "app.log")
-	imapConfigKeyPath := envOrDefault("IMAP_CONFIG_KEY_FILE", "/llama_lab/private/imap-config.key")
+	configDir := config.EnvOrDefault("CONFIG_DIR", "/llama_lab/config")
+	stateDir := config.EnvOrDefault("STATE_DIR", "/llama_lab/state")
+	logPath := filepath.Join(config.EnvOrDefault("LOG_DIR", "/llama_lab/logs"), "app.log")
+	imapConfigKeyPath := config.EnvOrDefault("IMAP_CONFIG_KEY_FILE", "/llama_lab/private/imap-config.key")
 	pairingSecret := strings.TrimSpace(os.Getenv("PAIRING_SECRET"))
 	return &Server{
 		cfg:                  cfg,
@@ -569,7 +567,7 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 
 	smtpHost := strings.TrimSpace(payload.SMTPHost)
 	if smtpHost == "" {
-		smtpHost = strings.TrimSpace(envOrDefault("SMTP_HOST", ""))
+		smtpHost = strings.TrimSpace(config.EnvOrDefault("SMTP_HOST", ""))
 	}
 	if smtpHost == "" {
 		smtpHost = deriveSMTPHost(payload.Host)
@@ -715,108 +713,36 @@ func writeIMAPConfigPayload(path, keyPath string, payload imapConfigPayload) err
 	return writeEncryptedPayload(path, keyPath, plain)
 }
 
-type encryptedPayload struct {
-	Version    int    `json:"version"`
-	Nonce      string `json:"nonce"`
-	Ciphertext string `json:"ciphertext"`
-}
-
 func writeEncryptedPayload(path, keyPath string, payload []byte) error {
-	key, err := loadOrCreateEncryptionKey(keyPath)
+	key, err := cryptutil.LoadOrCreateKey(keyPath)
 	if err != nil {
 		return err
 	}
 
-	block, err := aes.NewCipher(key)
+	env, err := cryptutil.Seal(payload, key)
 	if err != nil {
 		return err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return err
-	}
-
-	sealed := gcm.Seal(nil, nonce, payload, nil)
-	env := encryptedPayload{
-		Version:    1,
-		Nonce:      base64.StdEncoding.EncodeToString(nonce),
-		Ciphertext: base64.StdEncoding.EncodeToString(sealed),
 	}
 	b, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return atomicWritePrivateFile(path, b)
+	return fsutil.AtomicWriteFile(path, b, 0o600)
 }
 
 func decryptEncryptedPayload(raw []byte, keyPath string) ([]byte, error) {
-	var env encryptedPayload
-	if err := json.Unmarshal(raw, &env); err != nil || env.Version != 1 || strings.TrimSpace(env.Nonce) == "" || strings.TrimSpace(env.Ciphertext) == "" {
+	env, ok := cryptutil.ParseEnvelope(raw)
+	if !ok {
 		// Backward-compatibility with plaintext credentials.
 		return raw, nil
 	}
 
-	key, err := loadOrCreateEncryptionKey(keyPath)
+	key, err := cryptutil.LoadOrCreateKey(keyPath)
 	if err != nil {
 		return nil, err
 	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce, err := base64.StdEncoding.DecodeString(env.Nonce)
-	if err != nil {
-		return nil, err
-	}
-	ciphertext, err := base64.StdEncoding.DecodeString(env.Ciphertext)
-	if err != nil {
-		return nil, err
-	}
-	plain, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, err
-	}
-	return plain, nil
-}
-
-func loadOrCreateEncryptionKey(path string) ([]byte, error) {
-	b, err := os.ReadFile(path)
-	if err == nil {
-		decoded, decErr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(b)))
-		if decErr != nil {
-			return nil, decErr
-		}
-		if len(decoded) != 32 {
-			return nil, errors.New("invalid encryption master key length")
-		}
-		return decoded, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
-	}
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, err
-	}
-	encoded := []byte(base64.StdEncoding.EncodeToString(key))
-	if err := atomicWritePrivateFile(path, encoded); err != nil {
-		return nil, err
-	}
-	return key, nil
+	return cryptutil.Open(env, key)
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -1013,49 +939,14 @@ func (s *Server) handleNotificationTest(w http.ResponseWriter, r *http.Request) 
 	failed := 0
 	removed := 0
 	if len(subs) > 0 {
-		privateKey, err := config.LoadVAPIDPrivateKey(s.cfg.Notifications.PrivateKeyPath)
+		outcome, err := processor.SendWebPush(store, s.cfg.Notifications.PublicKey, s.cfg.Notifications.PrivateKeyPath, 3600, payloadBytes)
 		if err != nil {
 			http.Error(w, "failed to load notification private key", http.StatusInternalServerError)
 			return
 		}
-
-		options := &webpush.Options{
-			Subscriber:      "mailto:noreply@localhost",
-			VAPIDPublicKey:  s.cfg.Notifications.PublicKey,
-			VAPIDPrivateKey: privateKey,
-			TTL:             3600,
-		}
-
-		staleEndpoints := []string{}
-		for _, sub := range subs {
-			resp, err := webpush.SendNotification(payloadBytes, &webpush.Subscription{
-				Endpoint: sub.Endpoint,
-				Keys: webpush.Keys{
-					Auth:   sub.Auth,
-					P256dh: sub.P256DH,
-				},
-			}, options)
-			if err != nil {
-				failed++
-				continue
-			}
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusCreated {
-				sent++
-				continue
-			}
-			failed++
-			if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
-				staleEndpoints = append(staleEndpoints, sub.Endpoint)
-			}
-		}
-
-		for _, endpoint := range staleEndpoints {
-			ok, err := store.RemoveNotificationSubscription(endpoint)
-			if err == nil && ok {
-				removed++
-			}
-		}
+		sent = outcome.Sent
+		failed = outcome.Failed
+		removed = outcome.Removed
 	}
 
 	nativeDevices := store.ListNativeDevices()
@@ -1063,66 +954,28 @@ func (s *Server) handleNotificationTest(w http.ResponseWriter, r *http.Request) 
 	nativeFailed := 0
 	nativeRemoved := 0
 	nativeError := ""
-	if len(nativeDevices) > 0 && store.NativeDeliveryMode() == state.DeliveryModePull {
-		// App Pull mode: queue the test for the device to fetch over HTTP
-		// instead of dispatching through the relay/Firebase.
-		if err := store.EnqueuePullNotification(state.PullNotification{
-			Title: title,
-			Body:  body,
-			Data:  map[string]string{"url": "/notifications"},
-		}); err != nil {
-			nativeError = "failed to queue pull notification: " + err.Error()
-			s.logger.Error("test native pull notification failed", "error", err.Error())
-		} else {
-			nativeSent = 1
-		}
-	} else if len(nativeDevices) > 0 {
+	if len(nativeDevices) > 0 {
 		nativeMessage := processor.NativePushMessage{
 			Title: title,
 			Body:  body,
 			Data:  map[string]string{"url": "/notifications"},
 		}
-		// Relay health for this probe: track per platform. A success or a stale-token
-		// response means the relay answered; only a non-stale error means the relay is failing.
-		relayResponded := make(map[string]bool) // platform -> responded
-		relayFailure := make(map[string]string) // platform -> failure reason
-		for _, device := range nativeDevices {
-			platform := strings.ToLower(strings.TrimSpace(device.Platform))
-			if platform == "" {
-				platform = "android" // default for unknown/empty
-			}
-
-			sendCtx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
-			err := s.nativePushDispatcher.Send(sendCtx, device, nativeMessage)
-			cancel()
+		outcome, err := processor.SendNativePush(r.Context(), s.nativePushDispatcher, s.health, store, nativeMessage, func(device state.NativeDevice, platform string, sendErr error) {
+			s.logger.Error("test native notification failed", "device_id", strings.TrimSpace(device.DeviceID), "platform", platform, "sender", "relay", "error", sendErr.Error())
+		})
+		if outcome.Queued {
+			// App Pull mode: queue the test for the device to fetch over HTTP
+			// instead of dispatching through the relay/Firebase.
 			if err != nil {
-				nativeFailed++
-				if errors.Is(err, processor.ErrNativeDeviceStale) {
-					relayResponded[platform] = true
-					if strings.TrimSpace(device.DeviceID) != "" {
-						if ok, rmErr := store.RemoveNativeDevice(device.DeviceID); rmErr == nil && ok {
-							nativeRemoved++
-						}
-					}
-				} else {
-					// Prefix the failure reason with the platform for diagnostics
-					relayFailure[platform] = fmt.Sprintf("[%s] %s", platform, err.Error())
-				}
-				s.logger.Error("test native notification failed", "device_id", strings.TrimSpace(device.DeviceID), "platform", platform, "sender", "relay", "error", err.Error())
-				continue
+				nativeError = "failed to queue pull notification: " + err.Error()
+				s.logger.Error("test native pull notification failed", "error", err.Error())
+			} else {
+				nativeSent = outcome.Sent
 			}
-			relayResponded[platform] = true
-			nativeSent++
-		}
-		// Update health per platform: record failures once per platform that failed,
-		// and successes for platforms that responded without failure.
-		for _, failure := range relayFailure {
-			s.health.RecordNativePushFailure(failure)
-		}
-		for platform := range relayResponded {
-			if _, hasFailed := relayFailure[platform]; !hasFailed {
-				s.health.RecordNativePushSuccess()
-			}
+		} else {
+			nativeSent = outcome.Sent
+			nativeFailed = outcome.Failed
+			nativeRemoved = outcome.Removed
 		}
 	}
 
@@ -2240,7 +2093,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			lines = v
 		}
 	}
-	logDir := envOrDefault("LOG_DIR", "/llama_lab/logs")
+	logDir := config.EnvOrDefault("LOG_DIR", "/llama_lab/logs")
 	// Resolve requested file — default to app.log, allow any *.log in logDir
 	filename := filepath.Base(r.URL.Query().Get("file"))
 	if filename == "" || filename == "." {
@@ -2261,7 +2114,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogsList(w http.ResponseWriter, r *http.Request) {
-	logDir := envOrDefault("LOG_DIR", "/llama_lab/logs")
+	logDir := config.EnvOrDefault("LOG_DIR", "/llama_lab/logs")
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
 		http.Error(w, "failed to list logs", http.StatusInternalServerError)
@@ -2286,23 +2139,8 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"configured": false})
 		return
 	}
-	admin := firstAdmin(all)
+	admin := users.FirstAdminFrom(all)
 	writeJSON(w, http.StatusOK, map[string]any{"configured": true, "setup": map[string]any{"admin_user": admin.Username, "must_change_password": admin.MustChangePassword}})
-}
-
-// firstAdmin returns the earliest-created active admin, used only for the
-// pre-login /api/setup hint (prefilling the login form's username).
-func firstAdmin(all []users.User) users.User {
-	var best users.User
-	for _, u := range all {
-		if u.Role != users.RoleAdmin || !u.Active {
-			continue
-		}
-		if best.ID == "" || u.CreatedAt < best.CreatedAt {
-			best = u
-		}
-	}
-	return best
 }
 
 func (s *Server) handleRepair(w http.ResponseWriter, r *http.Request) {
@@ -2472,7 +2310,7 @@ func (s *Server) handleLlamaTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFrontend(w http.ResponseWriter, r *http.Request) {
-	frontendDir := envOrDefault("FRONTEND_DIR", "/opt/llama-lab/frontend")
+	frontendDir := config.EnvOrDefault("FRONTEND_DIR", "/opt/llama-lab/frontend")
 	indexPath := filepath.Join(frontendDir, "index.html")
 
 	requestPath := path.Clean("/" + r.URL.Path)
@@ -2607,14 +2445,6 @@ func envInt(name string, fallback int) int {
 	return v
 }
 
-func envOrDefault(name, fallback string) string {
-	v := os.Getenv(name)
-	if v == "" {
-		return fallback
-	}
-	return v
-}
-
 func tailLines(path string, limit int) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -2642,8 +2472,4 @@ func randomToken(size int) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%x", b), nil
-}
-
-func atomicWritePrivateFile(path string, payload []byte) error {
-	return fsutil.AtomicWriteFile(path, payload, 0o600)
 }

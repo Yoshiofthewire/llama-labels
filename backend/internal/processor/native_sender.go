@@ -79,11 +79,6 @@ func newRelaySenderFromEnvWithPrefix(log *logging.Logger, prefix string) *RelayS
 	}
 }
 
-// NewRelaySenderFromEnv is a backward-compatibility wrapper; it always uses PUSH_RELAY.
-func NewRelaySenderFromEnv(log *logging.Logger) *RelaySender {
-	return newRelaySenderFromEnvWithPrefix(log, "PUSH_RELAY")
-}
-
 // relayKeyFilePathWithPrefix is where an auto-registered key is persisted.
 // Parameterized by prefix so distinct relays (PUSH_RELAY vs APNS_RELAY) store
 // keys in distinct files and don't collide on disk.
@@ -98,11 +93,6 @@ func relayKeyFilePathWithPrefix(prefix string) string {
 	// e.g. "push_relay_key" for PUSH_RELAY, "apns_relay_key" for APNS_RELAY.
 	name := strings.ToLower(strings.TrimSuffix(prefix, "_RELAY")) + "_relay_key"
 	return filepath.Join(dir, name)
-}
-
-// relayKeyFilePath is a backward-compatibility wrapper; it always uses PUSH_RELAY.
-func relayKeyFilePath() string {
-	return relayKeyFilePathWithPrefix("PUSH_RELAY")
 }
 
 // resolveRelayKeyWithPrefix obtains the per-server relay key for a given relay prefix,
@@ -134,11 +124,6 @@ func resolveRelayKeyWithPrefix(log *logging.Logger, prefix, relayURL string, cli
 		log.Info("auto-registered with relay", "prefix", prefix, "key_file", path)
 	}
 	return key, nil
-}
-
-// resolveRelayKey is a backward-compatibility wrapper; it always uses PUSH_RELAY.
-func resolveRelayKey(log *logging.Logger, relayURL string, client *http.Client) (string, error) {
-	return resolveRelayKeyWithPrefix(log, "PUSH_RELAY", relayURL, client)
 }
 
 // registerWithRelay self-issues a per-server key from the relay's public
@@ -208,15 +193,6 @@ func (d *NativePushDispatcher) senderFor(platform string) *RelaySender {
 		return d.apnsSender
 	}
 	return d.fcmSender
-}
-
-// ConfiguredFor reports whether a relay is configured (URL set) for the given platform.
-// Used to distinguish "off" (no URL) from "broken" (URL set but key resolution failed).
-func (d *NativePushDispatcher) ConfiguredFor(platform string) bool {
-	if strings.EqualFold(strings.TrimSpace(platform), "ios") {
-		return strings.TrimSpace(os.Getenv("APNS_RELAY_URL")) != ""
-	}
-	return strings.TrimSpace(os.Getenv("PUSH_RELAY_URL")) != ""
 }
 
 // Send dispatches a native push to the appropriate relay based on device.Platform.

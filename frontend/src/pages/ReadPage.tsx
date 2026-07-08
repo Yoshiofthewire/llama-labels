@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { getJSON, postJSON, toErrorMessage } from "../api/client";
+import { usePagination } from "../hooks/usePagination";
+import { PageTabs } from "../components/PageTabs";
 
 type InboxEmail = {
   messageId: string;
@@ -244,7 +246,6 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
   const [actionError, setActionError] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("time");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
-  const [currentPage, setCurrentPage] = useState(1);
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
   const [clockTick, setClockTick] = useState(0);
   const [swipeRows, setSwipeRows] = useState<Record<string, SwipeRowState>>({});
@@ -446,11 +447,10 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
     [visibleRows, selectedMessageIds]
   );
 
-  const totalPages = Math.max(1, Math.ceil(visibleRows.length / EMAILS_PER_PAGE));
-  const pageRows = useMemo(() => {
-    const start = (currentPage - 1) * EMAILS_PER_PAGE;
-    return visibleRows.slice(start, start + EMAILS_PER_PAGE);
-  }, [currentPage, visibleRows]);
+  const { currentPage, setCurrentPage, totalPages, pageItems: pageRows } = usePagination(
+    visibleRows,
+    EMAILS_PER_PAGE
+  );
 
   const allRowsSelected = pageRows.length > 0 && pageRows.every((row) => selectedMessageIds.includes(row.messageId));
   const updatedLabel = useMemo(
@@ -499,12 +499,6 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
   useEffect(() => {
     setCurrentPage(1);
   }, [mailbox, activeTab, sortKey, sortDirection]);
-
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    }
-  }, [currentPage, totalPages]);
 
   function updateSort(nextKey: SortKey) {
     if (sortKey === nextKey) {
@@ -941,22 +935,13 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
         </div>
       ) : (
         <div className="inbox-list-region">
-          {totalPages > 1 ? (
-            <div className="inbox-page-tabs" role="tablist" aria-label="Email pages">
-              {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((page) => (
-                <button
-                  key={page}
-                  type="button"
-                  role="tab"
-                  aria-selected={currentPage === page}
-                  onClick={() => setCurrentPage(page)}
-                  className={`inbox-page-tab ${currentPage === page ? "active" : ""}`}
-                >
-                  {page}
-                </button>
-              ))}
-            </div>
-          ) : null}
+          <PageTabs
+            totalPages={totalPages}
+            currentPage={currentPage}
+            onSelect={setCurrentPage}
+            classPrefix="inbox"
+            ariaLabel="Email pages"
+          />
           <div className="inbox-table-wrap">
             <div className="inbox-table-scroll">
               <table className="inbox-table">

@@ -82,7 +82,7 @@ func newTestServer(t *testing.T) *Server {
 	logDir := t.TempDir()
 	stateDir := t.TempDir()
 
-	logger, err := logging.New(logDir, "info")
+	logger, err := logging.New(logDir)
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}

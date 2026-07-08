@@ -13,7 +13,7 @@ export function uniqueLabels(labels: string[]): string[] {
   return Array.from(new Set(labels.map((label) => label.trim()).filter(Boolean)));
 }
 
-export function normalizeKeywordMappings(input: unknown): Record<string, string[]> {
+function normalizeKeywordMappings(input: unknown): Record<string, string[]> {
   if (!input || typeof input !== "object") return {};
   const source = input as Record<string, unknown>;
   const out: Record<string, string[]> = {};

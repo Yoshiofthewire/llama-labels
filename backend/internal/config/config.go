@@ -23,6 +23,15 @@ type Paths struct {
 	LogDir     string
 }
 
+// EnvOrDefault returns the trimmed value of the environment variable key, or
+// fallback if it is unset or blank after trimming.
+func EnvOrDefault(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
 type Config struct {
 	Timezone string `yaml:"timezone" json:"timezone"`
 	LogLevel string `yaml:"logLevel" json:"logLevel"`

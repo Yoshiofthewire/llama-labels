@@ -14,10 +14,9 @@ type Logger struct {
 	mu     sync.Mutex
 	logger *log.Logger
 	writer *rotatingWriter
-	level  string
 }
 
-func New(logDir, level string) (*Logger, error) {
+func New(logDir string) (*Logger, error) {
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -26,7 +25,6 @@ func New(logDir, level string) (*Logger, error) {
 	return &Logger{
 		logger: log.New(mw, "", 0),
 		writer: w,
-		level:  level,
 	}, nil
 }
 

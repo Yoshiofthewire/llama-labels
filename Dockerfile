@@ -14,7 +14,7 @@ RUN npm run build
 
 FROM node:26.3.0-slim
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends supervisor tzdata curl ca-certificates lsof perl zstd \
+	&& apt-get install -y --no-install-recommends supervisor tzdata curl ca-certificates zstd \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& useradd -m -s /bin/bash llamalab
 

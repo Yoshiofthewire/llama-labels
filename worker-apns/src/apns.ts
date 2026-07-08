@@ -4,6 +4,8 @@
  * Generates ES256 provider tokens and sends to Apple's push service.
  */
 
+import { base64UrlEncode, base64UrlEncodeString } from "../../push-relay-shared/base64url";
+
 const APNS_PRODUCTION_HOST = "api.push.apple.com";
 const APNS_SANDBOX_HOST = "api.sandbox.push.apple.com";
 
@@ -45,19 +47,6 @@ async function importApnsPrivateKey(pem: string): Promise<CryptoKey> {
     false,
     ["sign"],
   );
-}
-
-function base64UrlEncode(bytes: ArrayBuffer | Uint8Array): string {
-  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  let binary = "";
-  for (let i = 0; i < arr.length; i++) {
-    binary += String.fromCharCode(arr[i]);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function base64UrlEncodeString(input: string): string {
-  return base64UrlEncode(new TextEncoder().encode(input));
 }
 
 /**

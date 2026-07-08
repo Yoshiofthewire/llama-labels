@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"llama-lab/backend/internal/retry"
 )
 
 const warmupRequestTimeout = 3 * time.Minute
@@ -45,6 +47,7 @@ func ResetWarmupState() {
 
 type HTTPClient struct {
 	baseURL string
+	apiKey  string
 	path    string
 	model   string
 	client  *http.Client
@@ -55,7 +58,7 @@ type HTTPClient struct {
 	lastClassify time.Time
 }
 
-func NewHTTPClient(baseURL, _apiKey, path, tuning string, timeout time.Duration) *HTTPClient {
+func NewHTTPClient(baseURL, apiKey, path, tuning string, timeout time.Duration) *HTTPClient {
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
@@ -74,6 +77,7 @@ func NewHTTPClient(baseURL, _apiKey, path, tuning string, timeout time.Duration)
 
 	return &HTTPClient{
 		baseURL:        strings.TrimRight(baseURL, "/"),
+		apiKey:         strings.TrimSpace(apiKey),
 		path:           path,
 		model:          model,
 		client:         &http.Client{Timeout: timeout},
@@ -106,11 +110,21 @@ func (c *HTTPClient) Classify(ctx context.Context, allowedLabels []string, sende
 		tuning = c.tuningTemplate
 	}
 	prompt := buildRuntimePrompt(tuning, allowedLabels, sender, subject, body)
-	for attempt := 0; attempt < 3; attempt++ {
+
+	// retrySubsequentBackoff tracks which subsequent-attempt backoff applies
+	// to the retry that was just requested by classifyAttempt below (tools-only
+	// responses back off longer than empty-message noise); classifyBackoff
+	// reads it once retry.Loop decides to sleep after the same attempt.
+	retrySubsequentBackoff := classifyRetryBackoff
+	classifyBackoff := func(attempt int) time.Duration {
+		return classifyRetryDelay(attempt, retrySubsequentBackoff)
+	}
+
+	classifyAttempt := func(attempt int) (string, error, bool) {
 		result, err := c.classifyOnce(ctx, prompt)
 		if err != nil {
 			appendLlamaErrorLog(err.Error())
-			return "", err
+			return "", err, false
 		}
 
 		normalized := strings.TrimSpace(result)
@@ -119,31 +133,27 @@ func (c *HTTPClient) Classify(ctx context.Context, allowedLabels []string, sende
 		if strings.Contains(strings.ToLower(normalized), "you've reached your weekly chat limit") {
 			appendLlamaErrorLog("AI credits exhausted: weekly chat limit response from model")
 			appendLlamaServerLog("[CLASSIFY FAILED] AI credits exhausted (weekly chat limit reached)")
-			return "", fmt.Errorf("%s\nuser has run out of ai credits", normalized)
+			return "", fmt.Errorf("%s\nuser has run out of ai credits", normalized), false
 		}
 
 		if isToolsOnlyResponse(normalized) {
 			appendLlamaServerLog(fmt.Sprintf("[CLASSIFY RETRY] tools-only response on attempt %d/%d, waiting before retry", attempt+1, 3))
+			retrySubsequentBackoff = 15 * time.Second
 			if attempt < 2 {
-				if err := sleepWithContext(ctx, classifyRetryDelay(attempt, 15*time.Second)); err != nil {
-					return "", err
-				}
-				continue
+				return "", nil, true
 			}
 			appendLlamaServerLog("[CLASSIFY FAILED] tools-only response exhausted all inner retries")
-			return "", fmt.Errorf("model returned tools-only response after %d attempts", attempt+1)
+			return "", fmt.Errorf("model returned tools-only response after %d attempts", attempt+1), false
 		}
 
 		if hasEmptyMessageNoise(normalized) || normalized == "" {
 			appendLlamaServerLog(fmt.Sprintf("[CLASSIFY RETRY] empty-message noise on attempt %d/%d, waiting before retry", attempt+1, 3))
+			retrySubsequentBackoff = classifyRetryBackoff
 			if attempt < 2 {
-				if err := sleepWithContext(ctx, classifyRetryDelay(attempt, classifyRetryBackoff)); err != nil {
-					return "", err
-				}
-				continue
+				return "", nil, true
 			}
 			appendLlamaServerLog("[CLASSIFY FAILED] empty-message noise exhausted all inner retries")
-			return "", fmt.Errorf("model returned empty-message noise after %d attempts", attempt+1)
+			return "", fmt.Errorf("model returned empty-message noise after %d attempts", attempt+1), false
 		}
 
 		searchText := stripTransientNoise(labelSearchScope(normalized))
@@ -153,7 +163,7 @@ func (c *HTTPClient) Classify(ctx context.Context, allowedLabels []string, sende
 			line = strings.TrimSpace(line)
 			for _, label := range allowedLabels {
 				if strings.EqualFold(line, label) {
-					return label, nil
+					return label, nil, false
 				}
 			}
 		}
@@ -161,13 +171,13 @@ func (c *HTTPClient) Classify(ctx context.Context, allowedLabels []string, sende
 		lines := strings.Split(searchText, "\n")
 		for i := len(lines) - 1; i >= 0; i-- {
 			if l := strings.TrimSpace(lines[i]); l != "" {
-				return l, nil
+				return l, nil, false
 			}
 		}
-		return normalized, nil
+		return normalized, nil, false
 	}
 
-	return "", fmt.Errorf("classify retry limit reached")
+	return retry.Loop(ctx, 3, classifyBackoff, classifyAttempt)
 }
 
 func (c *HTTPClient) classifyOnce(ctx context.Context, prompt string) (string, error) {
@@ -187,6 +197,9 @@ func (c *HTTPClient) classifyOnce(ctx context.Context, prompt string) (string, e
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -283,6 +296,9 @@ func (c *HTTPClient) pullModel(ctx context.Context) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {

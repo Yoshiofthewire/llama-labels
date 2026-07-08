@@ -280,22 +280,9 @@ function isThemeName(value: string): value is ThemeName {
 
 function applyThemeVars(theme: ThemeVars) {
   const root = document.documentElement;
-  root.style.setProperty("--bg", theme.bg);
-  root.style.setProperty("--panel", theme.panel);
-  root.style.setProperty("--ink", theme.ink);
-  root.style.setProperty("--ink-strong", theme.inkStrong);
-  root.style.setProperty("--accent", theme.accent);
-  root.style.setProperty("--accent-soft", theme.accentSoft);
-  root.style.setProperty("--line", theme.line);
-  root.style.setProperty("--glow", theme.glow);
-  root.style.setProperty("--sidebar-start", theme.sidebarStart);
-  root.style.setProperty("--sidebar-end", theme.sidebarEnd);
-  root.style.setProperty("--new-email-border", theme.newEmailBorder);
-  root.style.setProperty("--new-email-start", theme.newEmailStart);
-  root.style.setProperty("--new-email-end", theme.newEmailEnd);
-  root.style.setProperty("--new-email-text", theme.newEmailText);
-  root.style.setProperty("--button-text", theme.buttonText);
-  root.style.setProperty("--link-border", theme.linkBorder);
+  for (const [key, value] of Object.entries(theme) as [string, string][]) {
+    root.style.setProperty("--" + key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase()), value);
+  }
 }
 
 export function applyTheme(themeName: ThemeName) {

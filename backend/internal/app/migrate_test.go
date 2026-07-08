@@ -15,7 +15,7 @@ func TestMigrateLegacySingleUserData(t *testing.T) {
 	stateDir := t.TempDir()
 	logDir := t.TempDir()
 
-	logger, err := logging.New(logDir, "info")
+	logger, err := logging.New(logDir)
 	if err != nil {
 		t.Fatalf("logging.New: %v", err)
 	}

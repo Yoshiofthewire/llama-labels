@@ -276,6 +276,16 @@ func (s *Store) FirstAdmin() (User, error) {
 	if err != nil {
 		return User{}, err
 	}
+	admin := FirstAdminFrom(all)
+	if admin.ID == "" {
+		return User{}, ErrNotFound
+	}
+	return admin, nil
+}
+
+// FirstAdminFrom returns the earliest-created active admin in all, or a
+// zero-value User if there is none.
+func FirstAdminFrom(all []User) User {
 	var best User
 	for _, u := range all {
 		if u.Role != RoleAdmin || !u.Active {
@@ -285,10 +295,7 @@ func (s *Store) FirstAdmin() (User, error) {
 			best = u
 		}
 	}
-	if best.ID == "" {
-		return User{}, ErrNotFound
-	}
-	return best, nil
+	return best
 }
 
 // List returns every user (including deactivated ones), sorted by username.

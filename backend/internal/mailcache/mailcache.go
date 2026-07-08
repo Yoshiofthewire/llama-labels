@@ -94,26 +94,64 @@ type SyncResult struct {
 	Cursor int64
 }
 
+// entryMeta is the subset of fields Entry and Overview share, used to
+// compare "did this message's metadata change" without going through
+// entryFromOverview (which allocates a full Entry, more than a comparison
+// needs).
+type entryMeta struct {
+	Subject  string
+	Sender   string
+	SentTo   string
+	CC       string
+	BCC      string
+	Status   string
+	AtUTC    string
+	Keywords []string
+}
+
+func (m entryMeta) equal(o entryMeta) bool {
+	return m.Subject == o.Subject &&
+		m.Sender == o.Sender &&
+		m.SentTo == o.SentTo &&
+		m.CC == o.CC &&
+		m.BCC == o.BCC &&
+		m.Status == o.Status &&
+		m.AtUTC == o.AtUTC &&
+		slices.Equal(m.Keywords, o.Keywords)
+}
+
+func (e Entry) meta() entryMeta {
+	return entryMeta{
+		Subject:  e.Subject,
+		Sender:   e.Sender,
+		SentTo:   e.SentTo,
+		CC:       e.CC,
+		BCC:      e.BCC,
+		Status:   e.Status,
+		AtUTC:    e.AtUTC,
+		Keywords: e.Keywords,
+	}
+}
+
+func (o Overview) meta() entryMeta {
+	return entryMeta{
+		Subject:  o.Subject,
+		Sender:   o.Sender,
+		SentTo:   o.SentTo,
+		CC:       o.CC,
+		BCC:      o.BCC,
+		Status:   o.Status,
+		AtUTC:    o.AtUTC,
+		Keywords: o.Keywords,
+	}
+}
+
 func overviewMetaEqual(a Entry, b Overview) bool {
-	return a.Subject == b.Subject &&
-		a.Sender == b.Sender &&
-		a.SentTo == b.SentTo &&
-		a.CC == b.CC &&
-		a.BCC == b.BCC &&
-		a.Status == b.Status &&
-		a.AtUTC == b.AtUTC &&
-		slices.Equal(a.Keywords, b.Keywords)
+	return a.meta().equal(b.meta())
 }
 
 func entryMetaEqual(a, b Entry) bool {
-	return a.Subject == b.Subject &&
-		a.Sender == b.Sender &&
-		a.SentTo == b.SentTo &&
-		a.CC == b.CC &&
-		a.BCC == b.BCC &&
-		a.Status == b.Status &&
-		a.AtUTC == b.AtUTC &&
-		slices.Equal(a.Keywords, b.Keywords)
+	return a.meta().equal(b.meta())
 }
 
 func entryFromOverview(ov Overview) Entry {

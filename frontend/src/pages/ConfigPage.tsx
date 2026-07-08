@@ -45,14 +45,12 @@ type IMAPForm = {
 };
 
 const LOG_LEVEL_OPTIONS = ["trace", "debug", "info", "warn", "error", "fatal", "panic"];
-const FALLBACK_TIMEZONE_OPTIONS = ["UTC", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "Europe/London", "Europe/Paris", "Asia/Tokyo", "Asia/Kolkata", "Australia/Sydney"];
 
 function getTimezoneOptions(): string[] {
   const intlWithSupportedValues = Intl as typeof Intl & {
-    supportedValuesOf?: (key: "timeZone") => string[];
+    supportedValuesOf: (key: "timeZone") => string[];
   };
-  const supported = intlWithSupportedValues.supportedValuesOf?.("timeZone");
-  return Array.isArray(supported) && supported.length > 0 ? supported : FALLBACK_TIMEZONE_OPTIONS;
+  return intlWithSupportedValues.supportedValuesOf("timeZone");
 }
 
 function labelsToText(labels: string[]): string {
