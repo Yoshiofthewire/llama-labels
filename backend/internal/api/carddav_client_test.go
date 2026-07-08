@@ -171,3 +171,55 @@ func TestSyncCardDAVClientProbesEveryDiscoveredBook(t *testing.T) {
 		t.Errorf("UID = %q, want namespaced remote UID", list[0].UID)
 	}
 }
+
+// weakETagMultiStatusResponse is a hand-crafted REPORT response shaped like
+// one seen from mailbox.org/SOGo: a weak ETag (`W/"..."`) that does not
+// round-trip through strict HTTP-quote parsing. go-webdav's own
+// carddav.Client.QueryAddressBook aborts entirely on this (see
+// https://github.com/emersion/go-webdav internal.ETag.UnmarshalText), even
+// though the address-data underneath is perfectly valid — this is exactly
+// the bug fetchAddressBookCards exists to sidestep by never decoding
+// DAV:getetag at all.
+const weakETagMultiStatusResponse = `<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:response>
+    <D:href>/carddav/33/contacts/weak-etag-card.vcf</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:getetag>W/"abc123"</D:getetag>
+        <C:address-data>BEGIN:VCARD
+VERSION:4.0
+UID:weak-etag-card
+FN:Weak Etag Person
+EMAIL:weak@example.com
+END:VCARD
+</C:address-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>`
+
+func TestFetchAddressBookCardsToleratesMalformedETag(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "REPORT" {
+			http.Error(w, "expected REPORT", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = w.Write([]byte(weakETagMultiStatusResponse))
+	}))
+	defer srv.Close()
+
+	cards, err := fetchAddressBookCards(context.Background(), http.DefaultClient, srv.URL, "/carddav/33/contacts/")
+	if err != nil {
+		t.Fatalf("fetchAddressBookCards returned error (should tolerate the weak ETag): %v", err)
+	}
+	if len(cards) != 1 {
+		t.Fatalf("cards = %d, want 1", len(cards))
+	}
+	if fn := cards[0].Card.Value(vcard.FieldFormattedName); fn != "Weak Etag Person" {
+		t.Errorf("FN = %q, want %q", fn, "Weak Etag Person")
+	}
+}

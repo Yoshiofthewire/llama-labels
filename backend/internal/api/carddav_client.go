@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -221,12 +222,122 @@ func (s *Server) handleContactsCardDAVClientSync(w http.ResponseWriter, r *http.
 	})
 }
 
-// allPropsAddressBookQuery requests every property/field of every card in an
-// address book — v1 does no server-side filtering (see contactFromVCard's
-// caller and backend/internal/contacts/AGENTS.md for the matching policy on
-// our own DAV server side).
-func allPropsAddressBookQuery() *carddav.AddressBookQuery {
-	return &carddav.AddressBookQuery{DataRequest: carddav.AddressDataRequest{AllProp: true}}
+// remoteCard is one vCard resource fetched from an external CardDAV server,
+// stripped down to exactly what syncCardDAVClient needs.
+//
+// It is fetched with a hand-rolled, ETag-tolerant REPORT request rather than
+// go-webdav's carddav.Client.QueryAddressBook: that helper unconditionally
+// tries to decode each response's DAV:getetag property, and some real-world
+// servers (seen on mailbox.org/SOGo) emit ETags that don't round-trip
+// through Go's strict HTTP-quote parsing (e.g. weak validators like
+// `W/"..."`), which aborts the *entire* fetch even though every vCard body
+// underneath is perfectly valid. Sync only ever reads forward into our own
+// store — it never makes conditional requests back — so the ETag was never
+// used for anything here, and skipping it entirely sidesteps the bug rather
+// than working around it.
+type remoteCard struct {
+	Path string
+	Card vcard.Card
+}
+
+// addressbookQueryReportBody is a minimal CardDAV REPORT body (RFC 6352
+// §8.6) requesting every card in the target collection: an empty
+// C:filter test="anyof" matches everything, and only C:address-data is
+// requested (deliberately omitting D:getetag, see remoteCard).
+const addressbookQueryReportBody = `<?xml version="1.0" encoding="utf-8" ?>
+<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:prop>
+    <C:address-data/>
+  </D:prop>
+  <C:filter test="anyof"/>
+</C:addressbook-query>`
+
+type davMultiStatus struct {
+	XMLName   xml.Name      `xml:"DAV: multistatus"`
+	Responses []davResponse `xml:"DAV: response"`
+}
+
+type davResponse struct {
+	Href      string        `xml:"DAV: href"`
+	PropStats []davPropStat `xml:"DAV: propstat"`
+}
+
+type davPropStat struct {
+	Prop davProp `xml:"DAV: prop"`
+}
+
+type davProp struct {
+	AddressData string `xml:"urn:ietf:params:xml:ns:carddav address-data"`
+}
+
+// resolveCardDAVPath resolves p (an absolute or relative resource path, as
+// returned by address book discovery or configured directly) against
+// hostRoot, producing a full request URL.
+func resolveCardDAVPath(hostRoot, p string) (string, error) {
+	base, err := url.Parse(hostRoot)
+	if err != nil {
+		return "", err
+	}
+	ref, err := url.Parse(p)
+	if err != nil {
+		return "", err
+	}
+	return base.ResolveReference(ref).String(), nil
+}
+
+// fetchAddressBookCards issues a minimal addressbook-query REPORT against
+// path (resolved against hostRoot) and returns every vCard found. Entries
+// whose address-data fails to parse are skipped rather than aborting the
+// whole fetch, so one malformed remote card can't block importing the rest.
+func fetchAddressBookCards(ctx context.Context, httpClient webdav.HTTPClient, hostRoot, path string) ([]remoteCard, error) {
+	target, err := resolveCardDAVPath(hostRoot, path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve address book url: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "REPORT", target, strings.NewReader(addressbookQueryReportBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", `text/xml; charset="utf-8"`)
+	req.Header.Set("Depth", "1")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+	if resp.StatusCode != http.StatusMultiStatus && resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var ms davMultiStatus
+	if err := xml.Unmarshal(body, &ms); err != nil {
+		return nil, fmt.Errorf("decode multistatus response: %w", err)
+	}
+
+	cards := make([]remoteCard, 0, len(ms.Responses))
+	for _, r := range ms.Responses {
+		var raw string
+		for _, ps := range r.PropStats {
+			if strings.TrimSpace(ps.Prop.AddressData) != "" {
+				raw = ps.Prop.AddressData
+				break
+			}
+		}
+		if raw == "" {
+			continue
+		}
+		card, err := vcard.NewDecoder(strings.NewReader(raw)).Decode()
+		if err != nil {
+			continue
+		}
+		cards = append(cards, remoteCard{Path: r.Href, Card: card})
+	}
+	return cards, nil
 }
 
 // cardDAVHostRoot returns the bare scheme+host root ("https://host/") of a
@@ -331,11 +442,13 @@ func discoverAddressBooksFrom(ctx context.Context, httpClient webdav.HTTPClient,
 // directly. Otherwise it discovers the account's address books:
 //
 //  1. Try discovery starting at the exact URL the caller configured.
-//  2. If that fails, retry from the bare scheme+host root — some servers
-//     only resolve current-user-principal correctly at their DAV root, not
-//     at an arbitrary account-shaped path a user may have copied from
-//     elsewhere (which can silently resolve to the wrong account/collection
-//     rather than erroring).
+//  2. If that fails, walk up the URL one path segment at a time toward the
+//     bare scheme+host root, retrying discovery at each level — servers only
+//     resolve current-user-principal correctly at their actual DAV mount
+//     point, and a user-supplied URL is often a deeper, account-specific
+//     path under that mount (e.g. ".../carddav/33") rather than the mount
+//     itself (".../carddav/"), which can otherwise silently resolve to the
+//     wrong account/collection rather than erroring.
 //  3. If discovery fails outright, fall back to treating the configured URL
 //     itself as the exact address book collection (some providers document
 //     that directly instead of a discovery root).
@@ -354,15 +467,10 @@ func syncCardDAVClient(ctx context.Context, cfg carddavClientConfigPayload, stor
 	if err != nil {
 		return 0, 0, "", nil, fmt.Errorf("parse server url: %w", err)
 	}
-	queryClient, err := carddav.NewClient(authed, hostRoot)
-	if err != nil {
-		return 0, 0, "", nil, fmt.Errorf("connect to carddav server: %w", err)
-	}
-
-	var objects []carddav.AddressObject
+	var cards []remoteCard
 	addressBookPath = cfg.AddressBookPath
 	if addressBookPath != "" {
-		objects, err = queryClient.QueryAddressBook(ctx, addressBookPath, allPropsAddressBookQuery())
+		cards, err = fetchAddressBookCards(ctx, authed, hostRoot, addressBookPath)
 		if err != nil {
 			return 0, 0, addressBookPath, nil, fmt.Errorf("fetch address book contents: %w", err)
 		}
@@ -386,23 +494,23 @@ func syncCardDAVClient(ctx context.Context, cfg carddavClientConfigPayload, stor
 			if perr != nil {
 				return 0, 0, "", nil, fmt.Errorf("discover address books: %w", discoverErr)
 			}
-			objs, qerr := queryClient.QueryAddressBook(ctx, directPath, allPropsAddressBookQuery())
+			fetched, qerr := fetchAddressBookCards(ctx, authed, hostRoot, directPath)
 			if qerr != nil {
 				return 0, 0, "", nil, fmt.Errorf("discover address books: %w", discoverErr)
 			}
 			addressBookPath = directPath
-			objects = objs
+			cards = fetched
 		} else {
 			discovered = make([]discoveredAddressBook, len(books))
-			perBookObjects := make([][]carddav.AddressObject, len(books))
+			perBookCards := make([][]remoteCard, len(books))
 			chosen := 0
 			foundNonEmpty := false
 			for i, b := range books {
-				objs, qerr := queryClient.QueryAddressBook(ctx, b.Path, allPropsAddressBookQuery())
+				fetched, qerr := fetchAddressBookCards(ctx, authed, hostRoot, b.Path)
 				count := 0
 				if qerr == nil {
-					count = len(objs)
-					perBookObjects[i] = objs
+					count = len(fetched)
+					perBookCards[i] = fetched
 				}
 				discovered[i] = discoveredAddressBook{Path: b.Path, Name: b.Name, ContactCount: count}
 				if qerr == nil && count > 0 && !foundNonEmpty {
@@ -411,14 +519,14 @@ func syncCardDAVClient(ctx context.Context, cfg carddavClientConfigPayload, stor
 				}
 			}
 			addressBookPath = books[chosen].Path
-			objects = perBookObjects[chosen]
+			cards = perBookCards[chosen]
 		}
 	}
 
-	for _, obj := range objects {
-		uid := remoteContactUID(obj)
+	for _, c := range cards {
+		uid := remoteContactUID(c)
 		_, existed := store.Get(uid)
-		if _, err := store.Upsert(contactFromVCard(uid, obj.Card)); err != nil {
+		if _, err := store.Upsert(contactFromVCard(uid, c.Card)); err != nil {
 			return imported, updated, addressBookPath, discovered, fmt.Errorf("save contact %s: %w", uid, err)
 		}
 		if existed {
@@ -435,10 +543,10 @@ func syncCardDAVClient(ctx context.Context, cfg carddavClientConfigPayload, stor
 // updates the same local contact instead of duplicating it, or a stable hash
 // of its resource path otherwise. Namespaced so it can never collide with a
 // UUID assigned to a locally-created contact.
-func remoteContactUID(obj carddav.AddressObject) string {
-	if uid := strings.TrimSpace(obj.Card.Value(vcard.FieldUID)); uid != "" {
+func remoteContactUID(c remoteCard) string {
+	if uid := strings.TrimSpace(c.Card.Value(vcard.FieldUID)); uid != "" {
 		return "carddav-import-" + uid
 	}
-	sum := sha1.Sum([]byte(obj.Path))
+	sum := sha1.Sum([]byte(c.Path))
 	return "carddav-import-" + hex.EncodeToString(sum[:])
 }
