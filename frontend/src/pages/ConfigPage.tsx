@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { deleteJSON, getJSON, postJSON, putJSON, toErrorMessage } from "../api/client";
 import { normalizeConfig, uniqueLabels, type AppConfig } from "../api/config";
+import {
+  deleteCardDAVClientConfig,
+  generateDAVPassword,
+  getCardDAVClientConfig,
+  getDAVPasswordStatus,
+  revokeDAVPassword,
+  saveCardDAVClientConfig,
+  syncCardDAVClient,
+  type CardDAVClientConfig,
+  type DAVPasswordStatus
+} from "../api/contacts";
 import { useAuth } from "../auth";
 import { applyTheme, getStoredTheme, THEME_OPTIONS, type ThemeName } from "../theme";
 
@@ -109,8 +120,20 @@ export function ConfigPage() {
 
   const [llamaTestBusy, setLlamaTestBusy] = useState(false);
   const [llamaTestResult, setLlamaTestResult] = useState("");
-  const [activeTab, setActiveTab] = useState<"application" | "email" | "labels" | "llm">(isAdmin ? "application" : "email");
+  const [activeTab, setActiveTab] = useState<"application" | "email" | "carddav" | "labels" | "llm">(isAdmin ? "application" : "email");
   const configStatusTone = configStatus.toLowerCase().includes("failed") ? "notice notice-error" : "notice notice-success";
+
+  const [davStatus, setDavStatus] = useState<DAVPasswordStatus | null>(null);
+  const [davBusy, setDavBusy] = useState(false);
+  const [revealedPassword, setRevealedPassword] = useState("");
+  const [copyStatus, setCopyStatus] = useState("");
+  const davURL = auth.username ? `${window.location.origin}/dav/${encodeURIComponent(auth.username)}/contacts/` : "";
+
+  const [clientConfig, setClientConfig] = useState<CardDAVClientConfig | null>(null);
+  const [clientForm, setClientForm] = useState({ serverUrl: "", username: "", password: "" });
+  const [clientBusy, setClientBusy] = useState(false);
+  const [clientSyncBusy, setClientSyncBusy] = useState(false);
+  const [clientMessage, setClientMessage] = useState("");
 
   const effectiveAllowlist = useMemo(() => {
     const cfgLabels = textToLabels(allowlistText);
@@ -155,6 +178,22 @@ export function ConfigPage() {
     }
   }
 
+  async function refreshDavStatus() {
+    setDavStatus(await getDAVPasswordStatus());
+  }
+
+  async function refreshCardDAVClientConfig() {
+    const status = await getCardDAVClientConfig();
+    setClientConfig(status);
+    if (status.configured) {
+      setClientForm((prev) => ({
+        serverUrl: status.serverUrl ?? prev.serverUrl,
+        username: status.username ?? prev.username,
+        password: ""
+      }));
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -179,7 +218,9 @@ export function ConfigPage() {
       // Load secondary panels independently so one failure does not block the entire page.
       await Promise.all([
         refreshLabels().catch(() => undefined),
-        refreshIMAPStatus().catch(() => undefined)
+        refreshIMAPStatus().catch(() => undefined),
+        refreshDavStatus().catch(() => undefined),
+        refreshCardDAVClientConfig().catch(() => undefined)
       ]);
     };
 
@@ -309,6 +350,106 @@ export function ConfigPage() {
     setCfg((prev) => (prev ? { ...prev, [key]: value } : prev));
   }
 
+  async function generateDavPassword() {
+    setDavBusy(true);
+    setCopyStatus("");
+    try {
+      const generated = await generateDAVPassword();
+      setRevealedPassword(generated.password);
+      await refreshDavStatus();
+    } catch (error: unknown) {
+      setConfigStatus(`Failed to generate CardDAV password: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setDavBusy(false);
+    }
+  }
+
+  async function revokeDavPassword() {
+    if (
+      !window.confirm(
+        "Revoke the CardDAV app password? Any connected CardDAV client will stop syncing until you generate a new one."
+      )
+    ) {
+      return;
+    }
+    setDavBusy(true);
+    setCopyStatus("");
+    try {
+      await revokeDAVPassword();
+      setRevealedPassword("");
+      await refreshDavStatus();
+    } catch (error: unknown) {
+      setConfigStatus(`Failed to revoke CardDAV password: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setDavBusy(false);
+    }
+  }
+
+  function copyDavPassword() {
+    if (!revealedPassword || !navigator.clipboard?.writeText) {
+      return;
+    }
+    void navigator.clipboard.writeText(revealedPassword).then(
+      () => setCopyStatus("Copied to clipboard."),
+      () => setCopyStatus("Could not copy automatically — copy it manually.")
+    );
+  }
+
+  async function saveCardDAVClient() {
+    if (!clientForm.serverUrl.trim() || !clientForm.username.trim() || !clientForm.password.trim()) {
+      setClientMessage("Server URL, username, and password are required.");
+      return;
+    }
+    setClientBusy(true);
+    setClientMessage("");
+    try {
+      await saveCardDAVClientConfig({
+        serverUrl: clientForm.serverUrl.trim(),
+        username: clientForm.username.trim(),
+        password: clientForm.password.trim()
+      });
+      setClientMessage("CardDAV client configuration saved.");
+      await refreshCardDAVClientConfig();
+    } catch (error: unknown) {
+      setClientMessage(`Failed to save CardDAV client configuration: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setClientBusy(false);
+    }
+  }
+
+  async function deleteCardDAVClient() {
+    if (!window.confirm("Remove the stored CardDAV client configuration?")) {
+      return;
+    }
+    setClientBusy(true);
+    setClientMessage("");
+    try {
+      await deleteCardDAVClientConfig();
+      setClientConfig({ configured: false });
+      setClientForm({ serverUrl: "", username: "", password: "" });
+      setClientMessage("CardDAV client configuration removed.");
+    } catch (error: unknown) {
+      setClientMessage(`Failed to remove CardDAV client configuration: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setClientBusy(false);
+    }
+  }
+
+  async function runCardDAVClientSync() {
+    setClientSyncBusy(true);
+    setClientMessage("");
+    try {
+      const result = await syncCardDAVClient();
+      setClientMessage(`Synced: ${result.imported ?? 0} imported, ${result.updated ?? 0} updated.`);
+      await refreshCardDAVClientConfig();
+    } catch (error: unknown) {
+      setClientMessage(`Sync failed: ${toErrorMessage(error, "unknown error")}`);
+      await refreshCardDAVClientConfig().catch(() => undefined);
+    } finally {
+      setClientSyncBusy(false);
+    }
+  }
+
   return (
     <section className="panel config-page">
       <div className="config-header">
@@ -321,6 +462,7 @@ export function ConfigPage() {
           <button type="button" role="tab" aria-selected={activeTab === "application"} className={`config-tab${activeTab === "application" ? " active" : ""}`} onClick={() => setActiveTab("application")}>Application</button>
         ) : null}
         <button type="button" role="tab" aria-selected={activeTab === "email"} className={`config-tab${activeTab === "email" ? " active" : ""}`} onClick={() => setActiveTab("email")}>Email Settings</button>
+        <button type="button" role="tab" aria-selected={activeTab === "carddav"} className={`config-tab${activeTab === "carddav" ? " active" : ""}`} onClick={() => setActiveTab("carddav")}>CardDAV</button>
         {isAdmin ? (
           <button type="button" role="tab" aria-selected={activeTab === "labels"} className={`config-tab${activeTab === "labels" ? " active" : ""}`} onClick={() => setActiveTab("labels")}>Labels</button>
         ) : null}
@@ -497,6 +639,120 @@ export function ConfigPage() {
           ) : null}
 
           {imapMessage ? <p className="config-muted">{imapMessage}</p> : null}
+        </div>
+      ) : null}
+
+      {activeTab === "carddav" ? (
+        <div className="config-card contacts-dav-card" role="tabpanel">
+          <h3>CardDAV Access</h3>
+          <p className="config-muted">
+            Point a CardDAV-capable app (iOS/macOS Contacts, Nextcloud, Thunderbird, or the Llama Labels mobile app) at
+            the address below using an app-specific password — never your account login password.
+          </p>
+          {davURL ? (
+            <div className="contacts-dav-url">
+              <code>{davURL}</code>
+            </div>
+          ) : null}
+          <div className="contacts-dav-status">
+            {davStatus?.configured ? (
+              <span className="contacts-badge contacts-status-active">
+                <span className="contacts-dot" aria-hidden="true" />
+                app password configured
+              </span>
+            ) : (
+              <span className="contacts-badge contacts-status-inactive">
+                <span className="contacts-dot" aria-hidden="true" />
+                no app password yet
+              </span>
+            )}
+          </div>
+          {revealedPassword ? (
+            <div className="contacts-dav-reveal">
+              <p className="config-muted">
+                Copy this now — it will not be shown again. Use it as the password for the CardDAV account above.
+              </p>
+              <div className="contacts-dav-secret">
+                <code>{revealedPassword}</code>
+                <button type="button" onClick={copyDavPassword}>
+                  Copy
+                </button>
+              </div>
+              {copyStatus ? <p className="config-muted">{copyStatus}</p> : null}
+            </div>
+          ) : null}
+          <div className="config-actions">
+            <button type="button" onClick={() => void generateDavPassword()} disabled={davBusy}>
+              {davBusy ? "Working..." : davStatus?.configured ? "Regenerate Password" : "Generate Password"}
+            </button>
+            {davStatus?.configured ? (
+              <button type="button" onClick={() => void revokeDavPassword()} disabled={davBusy}>
+                Revoke
+              </button>
+            ) : null}
+          </div>
+
+          <h3 style={{ marginTop: 24 }}>CardDAV Client</h3>
+          <p className="config-muted">
+            Pull contacts down from an external CardDAV server (iCloud, Google, Nextcloud, Fastmail, etc.) into your
+            Llama Labels address book. Imported contacts then reach the mobile app the same way locally-added ones do.
+          </p>
+          <div className="config-grid config-grid-two">
+            <label>
+              <div>Server URL</div>
+              <input
+                value={clientForm.serverUrl}
+                onChange={(event) => setClientForm((prev) => ({ ...prev, serverUrl: event.target.value }))}
+                placeholder="https://contacts.example.com/dav/"
+              />
+            </label>
+            <label>
+              <div>Username</div>
+              <input
+                value={clientForm.username}
+                onChange={(event) => setClientForm((prev) => ({ ...prev, username: event.target.value }))}
+              />
+            </label>
+            <label>
+              <div>Password or App Password</div>
+              <input
+                type="password"
+                value={clientForm.password}
+                onChange={(event) => setClientForm((prev) => ({ ...prev, password: event.target.value }))}
+                placeholder="Required when saving changes"
+              />
+            </label>
+          </div>
+          <div className="config-actions">
+            <button type="button" onClick={() => void saveCardDAVClient()} disabled={clientBusy}>
+              {clientBusy ? "Saving..." : "Save CardDAV Client"}
+            </button>
+            <button type="button" onClick={() => void runCardDAVClientSync()} disabled={clientSyncBusy || !clientConfig?.configured}>
+              {clientSyncBusy ? "Syncing..." : "Sync Now"}
+            </button>
+            {clientConfig?.configured ? (
+              <button type="button" onClick={() => void deleteCardDAVClient()} disabled={clientBusy}>
+                Delete Stored Configuration
+              </button>
+            ) : null}
+          </div>
+
+          {clientConfig?.configured ? (
+            <div className="config-status-card">
+              <p>Configured: Yes</p>
+              <p>Server URL: {clientConfig.serverUrl}</p>
+              <p>Username: {clientConfig.username}</p>
+              {clientConfig.addressBookPath ? <p>Address Book: {clientConfig.addressBookPath}</p> : null}
+              {clientConfig.lastSyncedAt ? <p>Last Synced: {clientConfig.lastSyncedAt}</p> : null}
+              {clientConfig.lastSyncError ? (
+                <p>Last Sync Error: {clientConfig.lastSyncError}</p>
+              ) : clientConfig.lastSyncedAt ? (
+                <p>Last Sync Result: {clientConfig.lastSyncImported ?? 0} imported, {clientConfig.lastSyncUpdated ?? 0} updated</p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {clientMessage ? <p className="config-muted">{clientMessage}</p> : null}
         </div>
       ) : null}
 

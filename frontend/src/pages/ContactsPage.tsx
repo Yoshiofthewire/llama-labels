@@ -3,16 +3,11 @@ import { toErrorMessage } from "../api/client";
 import {
   createContact,
   deleteContact,
-  generateDAVPassword,
-  getDAVPasswordStatus,
   listContacts,
-  revokeDAVPassword,
   updateContact,
   type Contact,
-  type ContactInput,
-  type DAVPasswordStatus
+  type ContactInput
 } from "../api/contacts";
-import { useAuth } from "../auth";
 
 type FormState = {
   fn: string;
@@ -68,7 +63,6 @@ function contactDisplayLine(contact: Contact): string {
 }
 
 export function ContactsPage() {
-  const auth = useAuth();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
@@ -78,13 +72,7 @@ export function ContactsPage() {
   const [editingUid, setEditingUid] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const [davStatus, setDavStatus] = useState<DAVPasswordStatus | null>(null);
-  const [davBusy, setDavBusy] = useState(false);
-  const [revealedPassword, setRevealedPassword] = useState("");
-  const [copyStatus, setCopyStatus] = useState("");
-
   const statusTone = status.toLowerCase().includes("failed") ? "notice notice-error" : "notice notice-success";
-  const davURL = auth.username ? `${window.location.origin}/dav/${encodeURIComponent(auth.username)}/contacts/` : "";
 
   async function refresh() {
     try {
@@ -98,17 +86,8 @@ export function ContactsPage() {
     }
   }
 
-  async function refreshDavStatus() {
-    try {
-      setDavStatus(await getDAVPasswordStatus());
-    } catch {
-      // Non-fatal: the CardDAV access card just shows nothing configured.
-    }
-  }
-
   useEffect(() => {
     void refresh();
-    void refreshDavStatus();
   }, []);
 
   function startCreate() {
@@ -167,59 +146,15 @@ export function ContactsPage() {
     }
   }
 
-  async function generatePassword() {
-    setDavBusy(true);
-    setCopyStatus("");
-    try {
-      const generated = await generateDAVPassword();
-      setRevealedPassword(generated.password);
-      await refreshDavStatus();
-    } catch (error: unknown) {
-      setStatus(`Failed to generate CardDAV password: ${toErrorMessage(error, "unknown error")}`);
-    } finally {
-      setDavBusy(false);
-    }
-  }
-
-  async function revokePassword() {
-    if (
-      !window.confirm(
-        "Revoke the CardDAV app password? Any connected CardDAV client will stop syncing until you generate a new one."
-      )
-    ) {
-      return;
-    }
-    setDavBusy(true);
-    setCopyStatus("");
-    try {
-      await revokeDAVPassword();
-      setRevealedPassword("");
-      await refreshDavStatus();
-    } catch (error: unknown) {
-      setStatus(`Failed to revoke CardDAV password: ${toErrorMessage(error, "unknown error")}`);
-    } finally {
-      setDavBusy(false);
-    }
-  }
-
-  function copyPassword() {
-    if (!revealedPassword || !navigator.clipboard?.writeText) {
-      return;
-    }
-    void navigator.clipboard.writeText(revealedPassword).then(
-      () => setCopyStatus("Copied to clipboard."),
-      () => setCopyStatus("Could not copy automatically — copy it manually.")
-    );
-  }
-
   return (
     <section className="panel contacts-page">
       <header className="contacts-header">
         <div>
           <h2>Contacts</h2>
           <p>
-            Your local address book. Sync it to a phone or computer over CardDAV, or let the Llama Labels mobile app
-            pull it down automatically once paired.
+            Your local address book. It reaches the Llama Labels mobile app automatically once paired, and can also
+            pull contacts in from an external CardDAV server or expose itself to other CardDAV apps — configure both
+            under Configuration &rarr; CardDAV.
           </p>
         </div>
         {!loading && contacts.length > 0 ? (
@@ -349,61 +284,6 @@ export function ContactsPage() {
                 </tbody>
               </table>
             </div>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="contacts-card contacts-dav-card">
-        <h3>CardDAV Access</h3>
-        <p className="contacts-muted">
-          Point a CardDAV-capable app (iOS/macOS Contacts, Nextcloud, Thunderbird, or the Llama Labels mobile app) at
-          the address below using an app-specific password — never your account login password.
-        </p>
-        {davURL ? (
-          <div className="contacts-dav-url">
-            <code>{davURL}</code>
-          </div>
-        ) : null}
-        <div className="contacts-dav-status">
-          {davStatus?.configured ? (
-            <span className="contacts-badge contacts-status-active">
-              <span className="contacts-dot" aria-hidden="true" />
-              app password configured
-            </span>
-          ) : (
-            <span className="contacts-badge contacts-status-inactive">
-              <span className="contacts-dot" aria-hidden="true" />
-              no app password yet
-            </span>
-          )}
-        </div>
-        {revealedPassword ? (
-          <div className="contacts-dav-reveal">
-            <p className="contacts-muted">
-              Copy this now — it will not be shown again. Use it as the password for the CardDAV account above.
-            </p>
-            <div className="contacts-dav-secret">
-              <code>{revealedPassword}</code>
-              <button type="button" className="contacts-action" onClick={copyPassword}>
-                Copy
-              </button>
-            </div>
-            {copyStatus ? <p className="contacts-muted">{copyStatus}</p> : null}
-          </div>
-        ) : null}
-        <div className="contacts-dav-actions">
-          <button type="button" className="contacts-action" onClick={() => void generatePassword()} disabled={davBusy}>
-            {davBusy ? "Working..." : davStatus?.configured ? "Regenerate Password" : "Generate Password"}
-          </button>
-          {davStatus?.configured ? (
-            <button
-              type="button"
-              className="contacts-action contacts-action-danger"
-              onClick={() => void revokePassword()}
-              disabled={davBusy}
-            >
-              Revoke
-            </button>
           ) : null}
         </div>
       </div>

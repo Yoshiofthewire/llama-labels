@@ -56,6 +56,13 @@ func (s *Server) userCardDAVAuthPath(userID string) string {
 	return filepath.Join(s.userConfigDir(userID), "carddav-auth.json")
 }
 
+// userCardDAVClientConfigPath is where the user's outbound CardDAV client
+// credentials (for pulling contacts from an external CardDAV server) are
+// stored, encrypted at rest the same way as imap-config.json.
+func (s *Server) userCardDAVClientConfigPath(userID string) string {
+	return filepath.Join(s.userConfigDir(userID), "carddav-client.json")
+}
+
 func (s *Server) userStore(userID string) (*state.Store, error) {
 	s.userMu.Lock()
 	defer s.userMu.Unlock()

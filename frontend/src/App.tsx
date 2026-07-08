@@ -23,7 +23,6 @@ const settingsNavItems: ReadonlyArray<{ to: string; label: string; adminOnly?: b
   { to: "/health", label: "System Health" },
   { to: "/config", label: "Configuration" },
   { to: "/notifications", label: "Notifications" },
-  { to: "/contacts", label: "Contacts" },
   { to: "/tuning", label: "Prompt Tuning" },
   { to: "/users", label: "Manage Users", adminOnly: true },
   { to: "/logs", label: "System Logs", adminOnly: true }
@@ -723,6 +722,13 @@ export function App() {
                 : null}
             </div>
           ) : null}
+
+          <Link
+            to="/contacts"
+            className={["nav-heading", location.pathname === "/contacts" ? "sidebar-link-active" : ""].filter(Boolean).join(" ")}
+          >
+            Contacts
+          </Link>
 
           <button
             type="button"

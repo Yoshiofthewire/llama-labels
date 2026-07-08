@@ -95,3 +95,46 @@ export function generateDAVPassword(): Promise<DAVPasswordGenerated> {
 export function revokeDAVPassword(): Promise<{ ok: boolean }> {
   return deleteJSON<{ ok: boolean }>("/api/contacts/dav-password");
 }
+
+export type CardDAVClientConfig = {
+  configured: boolean;
+  serverUrl?: string;
+  username?: string;
+  addressBookPath?: string;
+  updatedAt?: string;
+  lastSyncedAt?: string;
+  lastSyncError?: string;
+  lastSyncImported?: number;
+  lastSyncUpdated?: number;
+};
+
+export type CardDAVClientInput = {
+  serverUrl: string;
+  username: string;
+  password: string;
+};
+
+export function getCardDAVClientConfig(): Promise<CardDAVClientConfig> {
+  return getJSON<CardDAVClientConfig>("/api/contacts/carddav-client/config");
+}
+
+export function saveCardDAVClientConfig(input: CardDAVClientInput): Promise<CardDAVClientConfig> {
+  return postJSON<CardDAVClientConfig>("/api/contacts/carddav-client/config", input);
+}
+
+export function deleteCardDAVClientConfig(): Promise<{ ok: boolean }> {
+  return deleteJSON<{ ok: boolean }>("/api/contacts/carddav-client/config");
+}
+
+export type CardDAVClientSyncResult = {
+  ok: boolean;
+  imported?: number;
+  updated?: number;
+  addressBookPath?: string;
+  syncedAt?: string;
+  error?: string;
+};
+
+export function syncCardDAVClient(): Promise<CardDAVClientSyncResult> {
+  return postJSON<CardDAVClientSyncResult>("/api/contacts/carddav-client/sync", {});
+}
