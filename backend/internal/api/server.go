@@ -38,8 +38,10 @@ import (
 	"llama-lab/backend/internal/health"
 	"llama-lab/backend/internal/logging"
 	"llama-lab/backend/internal/mailcache"
+	"llama-lab/backend/internal/mfa"
 	"llama-lab/backend/internal/processor"
 	"llama-lab/backend/internal/state"
+	"llama-lab/backend/internal/totp"
 	"llama-lab/backend/internal/users"
 
 	goimap "github.com/BrianLeishman/go-imap"
@@ -73,7 +75,9 @@ type Server struct {
 	configPath           string
 	logPath              string
 	imapConfigKeyPath    string
+	totpSecretKeyPath    string
 	sessions             map[string]Session
+	mfaChallenges        *mfa.Store
 	pairingSecret        string
 	serverBaseURL        string
 	nativePushDispatcher *processor.NativePushDispatcher
@@ -95,6 +99,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 	stateDir := config.EnvOrDefault("STATE_DIR", "/llama_lab/state")
 	logPath := filepath.Join(config.EnvOrDefault("LOG_DIR", "/llama_lab/logs"), "app.log")
 	imapConfigKeyPath := config.EnvOrDefault("IMAP_CONFIG_KEY_FILE", "/llama_lab/private/imap-config.key")
+	totpSecretKeyPath := config.EnvOrDefault("TOTP_SECRET_KEY_FILE", "/llama_lab/private/totp-secret.key")
 	pairingSecret := strings.TrimSpace(os.Getenv("PAIRING_SECRET"))
 	return &Server{
 		cfg:                  cfg,
@@ -107,7 +112,9 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		configPath:           filepath.Join(configDir, "config.yaml"),
 		logPath:              logPath,
 		imapConfigKeyPath:    imapConfigKeyPath,
+		totpSecretKeyPath:    totpSecretKeyPath,
 		sessions:             map[string]Session{},
+		mfaChallenges:        mfa.NewStore(),
 		pairingSecret:        pairingSecret,
 		serverBaseURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("SERVER_BASE_URL")), "/"),
 		nativePushDispatcher: processor.NewNativePushDispatcher(logger),
@@ -125,6 +132,8 @@ func (s *Server) Run() error {
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("POST /api/health/repair", s.withAdmin(s.handleRepair))
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /api/auth/mfa/totp", s.handleMFATOTP)
+	mux.HandleFunc("POST /api/auth/mfa/recovery-code", s.handleMFARecoveryCode)
 	mux.HandleFunc("GET /api/auth/me", s.handleMe)
 	mux.HandleFunc("POST /api/auth/logout", s.withAuth(s.handleLogout))
 	mux.HandleFunc("POST /api/auth/password", s.withAuth(s.handleChangePassword))
@@ -2163,15 +2172,140 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
-	token, err := randomToken(24)
-	if err != nil {
+
+	// TOTP-enabled users must clear a second factor before a session exists.
+	// No cookie is set here; the client receives a challenge id to POST to
+	// /api/auth/mfa/totp or /api/auth/mfa/recovery-code.
+	if u.TOTPEnabled {
+		ch, err := s.mfaChallenges.Create(u.ID)
+		if err != nil {
+			http.Error(w, "session creation failed", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"mfaRequired": true,
+			"challengeId": ch.ID,
+			"methods":     []string{"totp"},
+		})
+		return
+	}
+
+	if err := s.startSession(w, u.ID); err != nil {
 		http.Error(w, "session creation failed", http.StatusInternalServerError)
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "mustChangePassword": u.MustChangePassword})
+}
+
+// startSession mints a session token for userID, records it, and sets the
+// llama_session cookie with exactly the flags the legacy password-only login
+// used. Shared by handleLogin and the second-factor endpoints.
+func (s *Server) startSession(w http.ResponseWriter, userID string) error {
+	token, err := randomToken(24)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
-	s.sessions[token] = Session{UserID: u.ID, ExpiresAt: time.Now().Add(24 * time.Hour)}
+	s.sessions[token] = Session{UserID: userID, ExpiresAt: time.Now().Add(24 * time.Hour)}
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "llama_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	return nil
+}
+
+// handleMFATOTP completes a login challenge with a TOTP code. It is
+// authenticated solely by possession of a valid challengeId (no session
+// cookie). On success it mints the real session.
+func (s *Server) handleMFATOTP(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ChallengeID string `json:"challengeId"`
+		Code        string `json:"code"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	ch, ok := s.mfaChallenges.Get(strings.TrimSpace(req.ChallengeID))
+	if !ok {
+		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
+		return
+	}
+	// A challenge is single-use: once a code has been consumed the step is
+	// recorded and any further attempt (replay) is rejected.
+	if ch.UsedTOTPStep != 0 {
+		http.Error(w, "challenge already used", http.StatusUnauthorized)
+		return
+	}
+
+	u, err := s.users.Get(ch.UserID)
+	if err != nil || !u.Active || !u.TOTPEnabled || u.TOTPSecretEnc == "" {
+		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
+		return
+	}
+	secret, err := mfa.OpenTOTPSecret(u.TOTPSecretEnc, s.totpSecretKeyPath)
+	if err != nil {
+		http.Error(w, "failed to load second factor", http.StatusInternalServerError)
+		return
+	}
+
+	step, valid := totp.Validate(secret, req.Code, time.Now())
+	if !valid {
+		if err := s.mfaChallenges.RecordTOTPAttempt(ch.ID); errors.Is(err, mfa.ErrTooManyAttempts) {
+			http.Error(w, "too many attempts", http.StatusUnauthorized)
+			return
+		}
+		http.Error(w, "invalid code", http.StatusUnauthorized)
+		return
+	}
+
+	s.mfaChallenges.RecordTOTPStep(ch.ID, step)
+	if err := s.startSession(w, u.ID); err != nil {
+		http.Error(w, "session creation failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "mustChangePassword": u.MustChangePassword})
+}
+
+// handleMFARecoveryCode completes a login challenge with a one-time recovery
+// code. The matched code is consumed (removed) on success.
+func (s *Server) handleMFARecoveryCode(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ChallengeID string `json:"challengeId"`
+		Code        string `json:"code"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	ch, ok := s.mfaChallenges.Get(strings.TrimSpace(req.ChallengeID))
+	if !ok {
+		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
+		return
+	}
+	u, err := s.users.Get(ch.UserID)
+	if err != nil || !u.Active || !u.TOTPEnabled {
+		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
+		return
+	}
+
+	_, matched, err := s.users.ConsumeRecoveryCode(u.ID, strings.TrimSpace(req.Code))
+	if err != nil {
+		http.Error(w, "failed to verify recovery code", http.StatusInternalServerError)
+		return
+	}
+	if !matched {
+		if err := s.mfaChallenges.RecordTOTPAttempt(ch.ID); errors.Is(err, mfa.ErrTooManyAttempts) {
+			http.Error(w, "too many attempts", http.StatusUnauthorized)
+			return
+		}
+		http.Error(w, "invalid code", http.StatusUnauthorized)
+		return
+	}
+
+	s.mfaChallenges.Delete(ch.ID)
+	if err := s.startSession(w, u.ID); err != nil {
+		http.Error(w, "session creation failed", http.StatusInternalServerError)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "mustChangePassword": u.MustChangePassword})
 }
 
