@@ -201,3 +201,29 @@ func TestEnableTOTPRequiresPendingSecret(t *testing.T) {
 		t.Fatalf("expected EnableTOTP without pending secret to error")
 	}
 }
+
+func TestSetPushMFAEnabled(t *testing.T) {
+	dir := t.TempDir()
+	store, err := LoadOrMigrate(dir, filepath.Join(dir, "admin.env"))
+	if err != nil {
+		t.Fatalf("LoadOrMigrate: %v", err)
+	}
+	u, err := store.Create("ivan", "pw-ivan", RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := store.SetPushMFAEnabled(u.ID, true); err != nil {
+		t.Fatalf("SetPushMFAEnabled true: %v", err)
+	}
+	got, _ := store.Get(u.ID)
+	if !got.PushMFAEnabled {
+		t.Fatalf("expected PushMFAEnabled true")
+	}
+	if _, err := store.SetPushMFAEnabled(u.ID, false); err != nil {
+		t.Fatalf("SetPushMFAEnabled false: %v", err)
+	}
+	got, _ = store.Get(u.ID)
+	if got.PushMFAEnabled {
+		t.Fatalf("expected PushMFAEnabled false")
+	}
+}

@@ -496,6 +496,16 @@ func (s *Store) DisableTOTP(id string) (User, error) {
 	})
 }
 
+// SetPushMFAEnabled flips the push-2FA flag. Preconditions (TOTP enabled, a
+// paired approver device present) are enforced by the API handler; this store
+// method only persists the bit.
+func (s *Store) SetPushMFAEnabled(id string, enabled bool) (User, error) {
+	return s.mutate(id, func(u *User) error {
+		u.PushMFAEnabled = enabled
+		return nil
+	})
+}
+
 // ReplaceRecoveryCodes overwrites the stored recovery-code hashes (used when a
 // user regenerates their codes).
 func (s *Store) ReplaceRecoveryCodes(id string, recoveryHashes []string) (User, error) {
