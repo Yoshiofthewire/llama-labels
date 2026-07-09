@@ -29,6 +29,8 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
   const [mfaChallengeId, setMfaChallengeId] = useState("");
   const [mfaCode, setMfaCode] = useState("");
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
+  const [mfaMethods, setMfaMethods] = useState<string[]>([]);
+  const [mfaMode, setMfaMode] = useState<"totp" | "push">("totp");
   const passwordMode = mode === "password";
 
   useEffect(() => {
@@ -78,9 +80,13 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
         mustChangePassword?: boolean;
         mfaRequired?: boolean;
         challengeId?: string;
+        methods?: string[];
       }>("/api/auth/login", { username, password });
       if (res.mfaRequired && res.challengeId) {
+        const methods = res.methods ?? [];
         setMfaChallengeId(res.challengeId);
+        setMfaMethods(methods);
+        setMfaMode(methods.includes("push") ? "push" : "totp");
         setMfaCode("");
         setUseRecoveryCode(false);
         setStatus("");
@@ -115,6 +121,58 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!mfaChallengeId || mfaMode !== "push") {
+      return;
+    }
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      try {
+        const res = await postJSON<{ status: string }>("/api/auth/mfa/push/poll", {
+          challengeId: mfaChallengeId
+        });
+        if (cancelled) {
+          return;
+        }
+        if (res.status === "approved") {
+          clearInterval(interval);
+          const fin = await postJSON<{ ok: boolean; mustChangePassword?: boolean }>(
+            "/api/auth/mfa/push/finish",
+            { challengeId: mfaChallengeId }
+          );
+          if (cancelled) {
+            return;
+          }
+          await onAuthChanged();
+          setMfaChallengeId("");
+          finishSignIn(Boolean(fin.mustChangePassword));
+        } else if (res.status === "denied" || res.status === "expired") {
+          clearInterval(interval);
+          if (cancelled) {
+            return;
+          }
+          setStatus(
+            res.status === "denied"
+              ? "Sign-in was denied on your device."
+              : "The approval request expired."
+          );
+          if (mfaMethods.includes("totp")) {
+            setMfaMode("totp");
+          }
+        }
+      } catch {
+        // Transient error; keep polling until the challenge resolves or expires.
+      }
+    }, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // finishSignIn/onAuthChanged are stable enough for this flow; re-running on
+    // challenge/mode/method changes is what matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mfaChallengeId, mfaMode, mfaMethods]);
 
   async function submitPasswordChange(e: FormEvent) {
     e.preventDefault();
@@ -157,53 +215,86 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
       <p>{passwordMode ? "Update your current password." : "Use your local admin credentials to access configuration and daemon controls."}</p>
 
       {mfaChallengeId ? (
-        <form onSubmit={submitMfa} className="auth-form">
-          <h3>Two-Factor Authentication</h3>
-          {useRecoveryCode ? (
-            <>
-              <p>Enter one of your saved recovery codes.</p>
-              <label>
-                <div>Recovery Code</div>
-                <input
-                  value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value)}
-                  autoComplete="one-time-code"
-                  placeholder="xxxx-xxxx-xxxx"
-                  autoFocus
-                />
-              </label>
-            </>
-          ) : (
-            <>
-              <p>Enter the 6-digit code from your authenticator app.</p>
-              <label>
-                <div>Authentication Code</div>
-                <input
-                  value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  placeholder="123456"
-                  autoFocus
-                />
-              </label>
-            </>
-          )}
-          <button type="submit" disabled={busy || mfaCode.trim() === ""}>
-            {busy ? "Verifying..." : "Verify"}
-          </button>
-          <button
-            type="button"
-            className="nav-link-button"
-            onClick={() => {
-              setUseRecoveryCode((v) => !v);
-              setMfaCode("");
-              setStatus("");
-            }}
-          >
-            {useRecoveryCode ? "Use authenticator code instead" : "Use a recovery code instead"}
-          </button>
-        </form>
+        mfaMode === "push" ? (
+          <div className="auth-form">
+            <h3>Two-Factor Authentication</h3>
+            <p>Approve this sign-in from a paired device. Waiting for approval…</p>
+            {mfaMethods.includes("totp") ? (
+              <button
+                type="button"
+                className="nav-link-button"
+                onClick={() => {
+                  setMfaMode("totp");
+                  setStatus("");
+                  setMfaCode("");
+                }}
+              >
+                Use authenticator code instead
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <form onSubmit={submitMfa} className="auth-form">
+            <h3>Two-Factor Authentication</h3>
+            {useRecoveryCode ? (
+              <>
+                <p>Enter one of your saved recovery codes.</p>
+                <label>
+                  <div>Recovery Code</div>
+                  <input
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value)}
+                    autoComplete="one-time-code"
+                    placeholder="xxxx-xxxx-xxxx"
+                    autoFocus
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <p>Enter the 6-digit code from your authenticator app.</p>
+                <label>
+                  <div>Authentication Code</div>
+                  <input
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="123456"
+                    autoFocus
+                  />
+                </label>
+              </>
+            )}
+            <button type="submit" disabled={busy || mfaCode.trim() === ""}>
+              {busy ? "Verifying..." : "Verify"}
+            </button>
+            <button
+              type="button"
+              className="nav-link-button"
+              onClick={() => {
+                setUseRecoveryCode((v) => !v);
+                setMfaCode("");
+                setStatus("");
+              }}
+            >
+              {useRecoveryCode ? "Use authenticator code instead" : "Use a recovery code instead"}
+            </button>
+            {mfaMethods.includes("push") ? (
+              <button
+                type="button"
+                className="nav-link-button"
+                onClick={() => {
+                  setMfaMode("push");
+                  setStatus("");
+                  setMfaCode("");
+                }}
+              >
+                Approve on a device instead
+              </button>
+            ) : null}
+          </form>
+        )
       ) : !needsPasswordChange ? (
         <form onSubmit={submitLogin} className="auth-form">
           <label>
