@@ -30,11 +30,27 @@ var (
 	// against this challenge — returned by ConsumeTOTPStep on a replay
 	// attempt.
 	ErrChallengeAlreadyUsed = errors.New("mfa: challenge already used")
+
+	// ErrChallengeAlreadyResolved is returned by ResolvePush when a push
+	// challenge already has an approve/deny decision (first response wins).
+	ErrChallengeAlreadyResolved = errors.New("mfa: challenge already resolved")
+
+	// ErrPushNotApproved is returned by ConsumePushApproval when the challenge
+	// is still pending or was denied.
+	ErrPushNotApproved = errors.New("mfa: challenge not approved")
+)
+
+// Push-challenge status values. An empty stored status is treated as pending.
+const (
+	PushPending  = "pending"
+	PushApproved = "approved"
+	PushDenied   = "denied"
 )
 
 // Challenge is an in-progress second-factor login. It exists between a
-// successful password check and a successful (or exhausted) TOTP/recovery
-// verification.
+// successful password check and a successful (or exhausted) second factor.
+// The same struct serves both TOTP and push: TOTP uses TOTPAttempts/
+// UsedTOTPStep; push uses PushStatus/RespondedBy. A challenge may offer both.
 type Challenge struct {
 	ID           string
 	UserID       string
@@ -42,6 +58,10 @@ type Challenge struct {
 	ExpiresAt    time.Time
 	TOTPAttempts int
 	UsedTOTPStep int64
+	// PushStatus is "", "pending", "approved", or "denied" ("" == pending).
+	PushStatus string
+	// RespondedBy is the deviceID that resolved the push challenge.
+	RespondedBy string
 }
 
 // Store is a concurrency-safe in-memory challenge map. Entries are swept
@@ -143,6 +163,67 @@ func (s *Store) Delete(id string) {
 	s.mu.Lock()
 	delete(s.m, id)
 	s.mu.Unlock()
+}
+
+// PushStatus returns the current push status for a live challenge: "pending",
+// "approved", or "denied". ok=false means missing or expired (caller should
+// treat as "expired"). It is in-memory only — cheap enough to poll frequently.
+func (s *Store) PushStatus(id string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch, ok := s.m[id]
+	if !ok || time.Now().After(ch.ExpiresAt) {
+		delete(s.m, id)
+		return "", false
+	}
+	if ch.PushStatus == "" {
+		return PushPending, true
+	}
+	return ch.PushStatus, true
+}
+
+// ResolvePush records the first approve/deny decision for a push challenge and
+// the device that made it. First response wins: once a decision exists, a
+// later call returns that decision together with ErrChallengeAlreadyResolved
+// rather than overwriting it.
+func (s *Store) ResolvePush(id, deviceID string, approve bool) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch, ok := s.m[id]
+	if !ok || time.Now().After(ch.ExpiresAt) {
+		delete(s.m, id)
+		return "", ErrChallengeNotFound
+	}
+	if ch.PushStatus == PushApproved || ch.PushStatus == PushDenied {
+		return ch.PushStatus, ErrChallengeAlreadyResolved
+	}
+	if approve {
+		ch.PushStatus = PushApproved
+	} else {
+		ch.PushStatus = PushDenied
+	}
+	ch.RespondedBy = deviceID
+	s.m[id] = ch
+	return ch.PushStatus, nil
+}
+
+// ConsumePushApproval atomically verifies the challenge is approved and, if so,
+// deletes it (single-use, mirroring the TOTP path) and returns its UserID.
+// Returns ErrChallengeNotFound if missing/expired, ErrPushNotApproved if the
+// challenge is still pending or was denied.
+func (s *Store) ConsumePushApproval(id string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch, ok := s.m[id]
+	if !ok || time.Now().After(ch.ExpiresAt) {
+		delete(s.m, id)
+		return "", ErrChallengeNotFound
+	}
+	if ch.PushStatus != PushApproved {
+		return "", ErrPushNotApproved
+	}
+	delete(s.m, id)
+	return ch.UserID, nil
 }
 
 // recoveryAlphabet has exactly 32 characters so a random byte modulo 32 is

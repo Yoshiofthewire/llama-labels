@@ -149,6 +149,52 @@ func TestConsumeTOTPStepConcurrentSingleUse(t *testing.T) {
 	}
 }
 
+func TestPushChallengeLifecycle(t *testing.T) {
+	st := NewStore()
+	ch, err := st.Create("user-1")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if status, ok := st.PushStatus(ch.ID); !ok || status != PushPending {
+		t.Fatalf("initial status = %q ok=%v, want pending", status, ok)
+	}
+
+	status, err := st.ResolvePush(ch.ID, "dev-1", true)
+	if err != nil || status != PushApproved {
+		t.Fatalf("ResolvePush = %q err=%v, want approved", status, err)
+	}
+
+	// First response wins: a second resolve is rejected with the prior status.
+	status2, err := st.ResolvePush(ch.ID, "dev-2", false)
+	if !errors.Is(err, ErrChallengeAlreadyResolved) || status2 != PushApproved {
+		t.Fatalf("second ResolvePush = %q err=%v, want approved+ErrChallengeAlreadyResolved", status2, err)
+	}
+
+	userID, err := st.ConsumePushApproval(ch.ID)
+	if err != nil || userID != "user-1" {
+		t.Fatalf("ConsumePushApproval = %q err=%v, want user-1", userID, err)
+	}
+	// Consumed => gone.
+	if _, ok := st.PushStatus(ch.ID); ok {
+		t.Fatalf("expected challenge deleted after consume")
+	}
+}
+
+func TestPushConsumeRequiresApproval(t *testing.T) {
+	st := NewStore()
+	ch, _ := st.Create("user-2")
+	if _, err := st.ResolvePush(ch.ID, "dev-1", false); err != nil {
+		t.Fatalf("ResolvePush deny: %v", err)
+	}
+	if status, ok := st.PushStatus(ch.ID); !ok || status != PushDenied {
+		t.Fatalf("status = %q ok=%v, want denied", status, ok)
+	}
+	if _, err := st.ConsumePushApproval(ch.ID); !errors.Is(err, ErrPushNotApproved) {
+		t.Fatalf("ConsumePushApproval on denied = %v, want ErrPushNotApproved", err)
+	}
+}
+
 func TestGenerateRecoveryCodes(t *testing.T) {
 	codes, err := GenerateRecoveryCodes(10)
 	if err != nil {
