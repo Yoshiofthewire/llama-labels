@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -69,16 +70,82 @@ func TestRecordTOTPAttemptLockout(t *testing.T) {
 	}
 }
 
-func TestRecordTOTPStep(t *testing.T) {
+func TestConsumeTOTPStep(t *testing.T) {
 	s := NewStore()
 	ch, err := s.Create("user-1")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	s.RecordTOTPStep(ch.ID, 987654)
+
+	if err := s.ConsumeTOTPStep(ch.ID, 987654); err != nil {
+		t.Fatalf("first ConsumeTOTPStep = %v, want nil", err)
+	}
 	got, ok := s.Get(ch.ID)
 	if !ok || got.UsedTOTPStep != 987654 {
 		t.Fatalf("UsedTOTPStep = %d (ok=%v), want 987654", got.UsedTOTPStep, ok)
+	}
+
+	// A second consume against the same challenge — whether with the same
+	// step (replay) or a different one — must be rejected.
+	if err := s.ConsumeTOTPStep(ch.ID, 987654); !errors.Is(err, ErrChallengeAlreadyUsed) {
+		t.Fatalf("second ConsumeTOTPStep (same step) = %v, want ErrChallengeAlreadyUsed", err)
+	}
+	if err := s.ConsumeTOTPStep(ch.ID, 111111); !errors.Is(err, ErrChallengeAlreadyUsed) {
+		t.Fatalf("second ConsumeTOTPStep (different step) = %v, want ErrChallengeAlreadyUsed", err)
+	}
+
+	if err := s.ConsumeTOTPStep("no-such-challenge", 1); !errors.Is(err, ErrChallengeNotFound) {
+		t.Fatalf("ConsumeTOTPStep on unknown id = %v, want ErrChallengeNotFound", err)
+	}
+}
+
+// TestConsumeTOTPStepConcurrentSingleUse is the regression test for the
+// TOCTOU race this method exists to close: many goroutines racing to consume
+// the same still-valid TOTP code against the same challenge must yield
+// exactly one winner, with every other caller told the challenge was already
+// used. Run with -race to also catch any reintroduced data race.
+func TestConsumeTOTPStepConcurrentSingleUse(t *testing.T) {
+	s := NewStore()
+	ch, err := s.Create("user-1")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	const goroutines = 20
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var successes, alreadyUsed, other int
+
+	start := make(chan struct{})
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			err := s.ConsumeTOTPStep(ch.ID, 555555)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				successes++
+			case errors.Is(err, ErrChallengeAlreadyUsed):
+				alreadyUsed++
+			default:
+				other++
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if successes != 1 {
+		t.Fatalf("successes = %d, want exactly 1 (successes=%d alreadyUsed=%d other=%d)", successes, successes, alreadyUsed, other)
+	}
+	if alreadyUsed != goroutines-1 {
+		t.Fatalf("alreadyUsed = %d, want %d (successes=%d alreadyUsed=%d other=%d)", alreadyUsed, goroutines-1, successes, alreadyUsed, other)
+	}
+	if other != 0 {
+		t.Fatalf("unexpected other errors = %d", other)
 	}
 }
 

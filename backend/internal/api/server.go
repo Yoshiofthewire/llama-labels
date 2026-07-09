@@ -2229,12 +2229,6 @@ func (s *Server) handleMFATOTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
 		return
 	}
-	// A challenge is single-use: once a code has been consumed the step is
-	// recorded and any further attempt (replay) is rejected.
-	if ch.UsedTOTPStep != 0 {
-		http.Error(w, "challenge already used", http.StatusUnauthorized)
-		return
-	}
 
 	u, err := s.users.Get(ch.UserID)
 	if err != nil || !u.Active || !u.TOTPEnabled || u.TOTPSecretEnc == "" {
@@ -2257,7 +2251,18 @@ func (s *Server) handleMFATOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mfaChallenges.RecordTOTPStep(ch.ID, step)
+	// A challenge is single-use: ConsumeTOTPStep atomically checks-and-marks
+	// consumption under a single lock, so two concurrent requests bearing the
+	// same still-valid code cannot both win (closes the TOCTOU window a
+	// separate Get + later RecordTOTPStep would leave open).
+	if err := s.mfaChallenges.ConsumeTOTPStep(ch.ID, step); err != nil {
+		if errors.Is(err, mfa.ErrChallengeAlreadyUsed) {
+			http.Error(w, "challenge already used", http.StatusUnauthorized)
+			return
+		}
+		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
+		return
+	}
 	if err := s.startSession(w, u.ID); err != nil {
 		http.Error(w, "session creation failed", http.StatusInternalServerError)
 		return

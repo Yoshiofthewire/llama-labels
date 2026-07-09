@@ -25,6 +25,11 @@ const challengeTTL = 5 * time.Minute
 var (
 	ErrChallengeNotFound = errors.New("mfa: challenge not found")
 	ErrTooManyAttempts   = errors.New("mfa: too many attempts")
+
+	// ErrChallengeAlreadyUsed indicates a TOTP code was already consumed
+	// against this challenge — returned by ConsumeTOTPStep on a replay
+	// attempt.
+	ErrChallengeAlreadyUsed = errors.New("mfa: challenge already used")
 )
 
 // Challenge is an in-progress second-factor login. It exists between a
@@ -108,17 +113,29 @@ func (s *Store) RecordTOTPAttempt(id string) error {
 	return nil
 }
 
-// RecordTOTPStep marks which TOTP step counter was consumed on this challenge,
-// so a valid code cannot be replayed against the same challenge.
-func (s *Store) RecordTOTPStep(id string, step int64) {
+// ConsumeTOTPStep atomically checks whether this challenge has already had a
+// TOTP step consumed and, if not, marks it consumed with step in the same
+// locked critical section. Callers must call this only after totp.Validate
+// has confirmed step is a currently-valid code — ConsumeTOTPStep itself does
+// not validate the code, it only enforces single-use. Doing the check and the
+// write under one lock (rather than a separate Get + later RecordTOTPStep)
+// closes a TOCTOU window where two concurrent requests bearing the same valid
+// code could otherwise both pass a stale "not yet used" check before either
+// recorded its use.
+func (s *Store) ConsumeTOTPStep(id string, step int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch, ok := s.m[id]
-	if !ok {
-		return
+	if !ok || time.Now().After(ch.ExpiresAt) {
+		delete(s.m, id)
+		return ErrChallengeNotFound
+	}
+	if ch.UsedTOTPStep != 0 {
+		return ErrChallengeAlreadyUsed
 	}
 	ch.UsedTOTPStep = step
 	s.m[id] = ch
+	return nil
 }
 
 // Delete removes a challenge (called on success or lockout).
