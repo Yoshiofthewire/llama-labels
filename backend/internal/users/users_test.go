@@ -130,3 +130,74 @@ func TestStoreLifecycle(t *testing.T) {
 		t.Fatalf("Get unknown: err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestTOTPEnrollmentLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	store, err := LoadOrMigrate(dir, filepath.Join(dir, "admin.env"))
+	if err != nil {
+		t.Fatalf("LoadOrMigrate: %v", err)
+	}
+	u, err := store.Create("carol", "pw", RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Pending secret does not enable TOTP.
+	if _, err := store.SetPendingTOTPSecret(u.ID, "sealed-secret-json"); err != nil {
+		t.Fatalf("SetPendingTOTPSecret: %v", err)
+	}
+	got, _ := store.Get(u.ID)
+	if got.TOTPEnabled || got.TOTPSecretEnc != "sealed-secret-json" {
+		t.Fatalf("after pending: %+v", got)
+	}
+
+	// Confirm enables and stores recovery hashes.
+	h1, _ := HashPassword("aaaa-bbbb-cccc")
+	h2, _ := HashPassword("dddd-eeee-ffff")
+	if _, err := store.EnableTOTP(u.ID, "2026-07-09T00:00:00Z", []string{h1, h2}); err != nil {
+		t.Fatalf("EnableTOTP: %v", err)
+	}
+	got, _ = store.Get(u.ID)
+	if !got.TOTPEnabled || got.TOTPConfirmedAt == "" || len(got.RecoveryCodesHash) != 2 {
+		t.Fatalf("after confirm: %+v", got)
+	}
+
+	// Consume a recovery code removes exactly one matching hash.
+	_, matched, err := store.ConsumeRecoveryCode(u.ID, "aaaa-bbbb-cccc")
+	if err != nil || !matched {
+		t.Fatalf("ConsumeRecoveryCode good = (%v, %v)", matched, err)
+	}
+	got, _ = store.Get(u.ID)
+	if len(got.RecoveryCodesHash) != 1 {
+		t.Fatalf("after consume: %d hashes left, want 1", len(got.RecoveryCodesHash))
+	}
+	// A non-matching / already-used code does not match and does not write.
+	_, matched, err = store.ConsumeRecoveryCode(u.ID, "aaaa-bbbb-cccc")
+	if err != nil || matched {
+		t.Fatalf("ConsumeRecoveryCode reused = (%v, %v), want (false, nil)", matched, err)
+	}
+
+	// Disable clears everything.
+	if _, err := store.DisableTOTP(u.ID); err != nil {
+		t.Fatalf("DisableTOTP: %v", err)
+	}
+	got, _ = store.Get(u.ID)
+	if got.TOTPEnabled || got.TOTPSecretEnc != "" || got.TOTPConfirmedAt != "" || len(got.RecoveryCodesHash) != 0 {
+		t.Fatalf("after disable: %+v", got)
+	}
+}
+
+func TestEnableTOTPRequiresPendingSecret(t *testing.T) {
+	dir := t.TempDir()
+	store, err := LoadOrMigrate(dir, filepath.Join(dir, "admin.env"))
+	if err != nil {
+		t.Fatalf("LoadOrMigrate: %v", err)
+	}
+	u, err := store.Create("dan", "pw", RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := store.EnableTOTP(u.ID, "2026-07-09T00:00:00Z", nil); err == nil {
+		t.Fatalf("expected EnableTOTP without pending secret to error")
+	}
+}

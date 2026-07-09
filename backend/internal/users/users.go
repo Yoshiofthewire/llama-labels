@@ -40,6 +40,18 @@ type User struct {
 	CreatedAt          string `json:"createdAt"`
 	UpdatedAt          string `json:"updatedAt"`
 	DeactivatedAt      string `json:"deactivatedAt,omitempty"`
+
+	// Two-factor auth (Milestone 1: TOTP). TOTPSecretEnc is a cryptutil
+	// envelope JSON string sealed with the dedicated TOTP key; it is set at
+	// enrollment ("pending") and only becomes active once TOTPEnabled flips
+	// true on confirmation. These fields are never exposed via Public().
+	TOTPEnabled       bool     `json:"totpEnabled,omitempty"`
+	TOTPSecretEnc     string   `json:"totpSecretEnc,omitempty"`
+	TOTPConfirmedAt   string   `json:"totpConfirmedAt,omitempty"`
+	RecoveryCodesHash []string `json:"recoveryCodesHash,omitempty"`
+	// PushMFAEnabled is reserved for a later push-2FA milestone; nothing in
+	// Milestone 1 sets or reads it.
+	PushMFAEnabled bool `json:"pushMfaEnabled,omitempty"`
 }
 
 // Public is the JSON-safe view returned to API clients (no password hash).
@@ -443,6 +455,80 @@ func (s *Store) Reactivate(id string) (User, error) {
 		u.DeactivatedAt = ""
 		return nil
 	})
+}
+
+// SetPendingTOTPSecret stores a sealed TOTP secret during enrollment without
+// enabling TOTP. It clears any previously confirmed state so a re-enrollment
+// always starts clean.
+func (s *Store) SetPendingTOTPSecret(id, secretEnc string) (User, error) {
+	return s.mutate(id, func(u *User) error {
+		u.TOTPSecretEnc = secretEnc
+		u.TOTPEnabled = false
+		u.TOTPConfirmedAt = ""
+		u.RecoveryCodesHash = nil
+		return nil
+	})
+}
+
+// EnableTOTP marks TOTP confirmed and stores the scrypt-hashed recovery codes.
+// It errors if no pending secret has been staged.
+func (s *Store) EnableTOTP(id, confirmedAt string, recoveryHashes []string) (User, error) {
+	return s.mutate(id, func(u *User) error {
+		if u.TOTPSecretEnc == "" {
+			return errors.New("no pending totp secret to confirm")
+		}
+		u.TOTPEnabled = true
+		u.TOTPConfirmedAt = confirmedAt
+		u.RecoveryCodesHash = recoveryHashes
+		return nil
+	})
+}
+
+// DisableTOTP clears all TOTP and recovery-code state.
+func (s *Store) DisableTOTP(id string) (User, error) {
+	return s.mutate(id, func(u *User) error {
+		u.TOTPEnabled = false
+		u.TOTPSecretEnc = ""
+		u.TOTPConfirmedAt = ""
+		u.RecoveryCodesHash = nil
+		u.PushMFAEnabled = false
+		return nil
+	})
+}
+
+// ReplaceRecoveryCodes overwrites the stored recovery-code hashes (used when a
+// user regenerates their codes).
+func (s *Store) ReplaceRecoveryCodes(id string, recoveryHashes []string) (User, error) {
+	return s.mutate(id, func(u *User) error {
+		u.RecoveryCodesHash = recoveryHashes
+		return nil
+	})
+}
+
+// errRecoveryCodeNoMatch aborts the mutate without a write when a recovery
+// code fails to match, so a wrong attempt never bumps UpdatedAt.
+var errRecoveryCodeNoMatch = errors.New("recovery code no match")
+
+// ConsumeRecoveryCode verifies candidate against the user's stored recovery
+// hashes; on the first match it removes that hash (one-time use) and persists.
+// It returns matched=false with a nil error and no write when nothing matches.
+func (s *Store) ConsumeRecoveryCode(id, candidate string) (User, bool, error) {
+	u, err := s.mutate(id, func(u *User) error {
+		for i, h := range u.RecoveryCodesHash {
+			if verifyScryptHash(h, candidate) {
+				u.RecoveryCodesHash = append(u.RecoveryCodesHash[:i], u.RecoveryCodesHash[i+1:]...)
+				return nil
+			}
+		}
+		return errRecoveryCodeNoMatch
+	})
+	if errors.Is(err, errRecoveryCodeNoMatch) {
+		return User{}, false, nil
+	}
+	if err != nil {
+		return User{}, false, err
+	}
+	return u, true, nil
 }
 
 // VerifyPassword checks a candidate password against a user's stored hash.
