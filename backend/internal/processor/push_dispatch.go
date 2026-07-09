@@ -99,17 +99,23 @@ type NativePushOutcome struct {
 }
 
 // SendNativePush dispatches message to every native device registered in
-// store. If the store's delivery mode is pull, devices are enqueued
-// server-side instead of being sent through the relay/Firebase (Sent is set
-// to 1 to indicate the queue write succeeded). Otherwise every device is
-// dispatched through dispatcher, each with its own timeout derived from ctx,
-// stale devices (ErrNativeDeviceStale) are removed from store, and relay
-// health is recorded on healthSvc per platform. onDeviceError, if non-nil, is
-// called for every non-stale dispatch failure so callers can log with their
-// own context (user/message ids differ between the poller and the API's test
-// endpoint).
+// store. See SendNativePushToDevices for the delivery semantics; this is a
+// thin wrapper that targets every device in store.
 func SendNativePush(ctx context.Context, dispatcher *NativePushDispatcher, healthSvc *health.Service, store *state.Store, message NativePushMessage, onDeviceError func(device state.NativeDevice, platform string, err error)) (NativePushOutcome, error) {
-	devices := store.ListNativeDevices()
+	return SendNativePushToDevices(ctx, dispatcher, healthSvc, store, store.ListNativeDevices(), message, onDeviceError)
+}
+
+// SendNativePushToDevices dispatches message to exactly the devices given (a
+// caller-filtered subset, e.g. push-2FA's approver-eligible devices — or, via
+// SendNativePush, every device in store). If the store's delivery mode is
+// pull, devices are enqueued server-side instead of being sent through the
+// relay/Firebase (Sent is set to 1 to indicate the queue write succeeded).
+// Otherwise every device is dispatched through dispatcher, each with its own
+// timeout derived from ctx, stale devices (ErrNativeDeviceStale) are removed
+// from store, and relay health is recorded on healthSvc per platform.
+// onDeviceError, if non-nil, is called for every non-stale dispatch failure so
+// callers can log with their own context.
+func SendNativePushToDevices(ctx context.Context, dispatcher *NativePushDispatcher, healthSvc *health.Service, store *state.Store, devices []state.NativeDevice, message NativePushMessage, onDeviceError func(device state.NativeDevice, platform string, err error)) (NativePushOutcome, error) {
 	if len(devices) == 0 {
 		return NativePushOutcome{}, nil
 	}

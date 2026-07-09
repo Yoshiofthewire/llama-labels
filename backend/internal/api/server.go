@@ -139,6 +139,8 @@ func (s *Server) Run() error {
 	mux.HandleFunc("POST /api/mfa/totp/confirm", s.withAuth(s.handleMFAConfirm))
 	mux.HandleFunc("POST /api/mfa/totp/disable", s.withAuth(s.handleMFADisable))
 	mux.HandleFunc("POST /api/mfa/recovery-codes/regenerate", s.withAuth(s.handleMFARecoveryCodesRegenerate))
+	mux.HandleFunc("PUT /api/mfa/push/enabled", s.withAuth(s.handleMFAPushEnabled))
+	mux.HandleFunc("PUT /api/notifications/native/devices/{deviceId}/mfa", s.withAuth(s.handleNativeDeviceMFA))
 	mux.HandleFunc("GET /api/auth/me", s.handleMe)
 	mux.HandleFunc("POST /api/auth/logout", s.withAuth(s.handleLogout))
 	mux.HandleFunc("POST /api/auth/password", s.withAuth(s.handleChangePassword))
@@ -1131,12 +1133,14 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 	}
 
 	device := state.NativeDevice{
-		DeviceID:   strings.TrimSpace(req.DeviceID),
-		Platform:   normalizeNativePlatform(req.Platform),
-		PushToken:  deviceToken,
-		DeviceName: strings.TrimSpace(req.DeviceName),
-		AppVersion: strings.TrimSpace(req.AppVersion),
-		UserAgent:  strings.TrimSpace(r.Header.Get("User-Agent")),
+		DeviceID:    strings.TrimSpace(req.DeviceID),
+		Platform:    normalizeNativePlatform(req.Platform),
+		PushToken:   deviceToken,
+		DeviceName:  strings.TrimSpace(req.DeviceName),
+		AppVersion:  strings.TrimSpace(req.AppVersion),
+		UserAgent:   strings.TrimSpace(r.Header.Get("User-Agent")),
+		UserID:      ownerID,
+		MFAApprover: true,
 	}
 	if err := store.UpsertNativeDevice(device); err != nil {
 		http.Error(w, "failed to persist native device", http.StatusInternalServerError)

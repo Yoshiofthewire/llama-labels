@@ -30,9 +30,27 @@ func (s *Server) handleMFAStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "user unavailable", http.StatusInternalServerError)
 		return
 	}
+	// Deliberately not named approverDevices: that identifier is a
+	// package-level function (push_mfa_handlers.go) computing the fanout
+	// set for an active challenge; this local variable lists every paired
+	// device (with its raw approver flag) for the management UI, which is a
+	// different, broader set on purpose.
+	deviceStatuses := []map[string]any{}
+	if store, err := s.userStore(ac.UserID); err == nil {
+		for _, d := range store.ListNativeDevices() {
+			deviceStatuses = append(deviceStatuses, map[string]any{
+				"deviceId":   d.DeviceID,
+				"deviceName": d.DeviceName,
+				"platform":   d.Platform,
+				"approver":   d.MFAApprover,
+			})
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"totpEnabled":            u.TOTPEnabled,
 		"recoveryCodesRemaining": len(u.RecoveryCodesHash),
+		"pushMfaEnabled":         u.PushMFAEnabled,
+		"approverDevices":        deviceStatuses,
 	})
 }
 
