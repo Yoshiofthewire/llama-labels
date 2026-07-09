@@ -145,6 +145,9 @@ export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProp
             return;
           }
           await onAuthChanged();
+          if (cancelled) {
+            return;
+          }
           setMfaChallengeId("");
           finishSignIn(Boolean(fin.mustChangePassword));
         } else if (res.status === "denied" || res.status === "expired") {
