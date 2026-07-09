@@ -251,6 +251,22 @@ func (s *Server) handlePushRespond(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The challenge's owning user must have push 2FA explicitly enabled. A
+	// challenge is created for TOTP-only users too (since login always offers
+	// TOTP), and every native device defaults to MFAApprover=true for ordinary
+	// push notifications regardless of this setting — without this check, any
+	// paired device could silently approve a login for a user who never opted
+	// into push as a second factor.
+	owner, err := s.users.Get(ownerID)
+	if err != nil {
+		http.Error(w, "user unavailable", http.StatusInternalServerError)
+		return
+	}
+	if !owner.PushMFAEnabled {
+		http.Error(w, "push approval is not enabled for this account", http.StatusForbidden)
+		return
+	}
+
 	store, err := s.userStore(ownerID)
 	if err != nil {
 		http.Error(w, "failed to open user state", http.StatusInternalServerError)

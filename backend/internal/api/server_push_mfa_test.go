@@ -268,6 +268,36 @@ func TestPushRespondCrossUserRejected(t *testing.T) {
 	}
 }
 
+// TestPushRespondRejectedWithoutPushEnabled covers a user who has TOTP 2FA and
+// a paired device (MFAApprover=true, the default for ordinary push
+// notifications) but has never opted into push as a second factor. Their
+// login challenge must not offer "push", and a response from their own paired
+// device must be rejected outright — not merely fail at finish time — proving
+// ResolvePush never ran and the challenge stays "pending".
+func TestPushRespondRejectedWithoutPushEnabled(t *testing.T) {
+	srv := newTestServer(t)
+	u, err := srv.users.Create("tara", "pw-tara", users.RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	enrollTOTP(t, srv, u.ID)
+	sub, hash := pairApproverDevice(t, srv, u.ID, "dev-tara")
+	// Deliberately do NOT call enablePush: PushMFAEnabled stays false.
+
+	challengeID, methods := loginChallenge(t, srv, "tara", "pw-tara")
+	if methodsContain(methods, "push") {
+		t.Fatalf("methods = %v, want push absent for a push-disabled user", methods)
+	}
+
+	rec := respondPush(srv, challengeID, sub, hash, "dev-tara", true)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("respond without push enabled: status=%d, want 403 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if status := pollPush(srv, challengeID); status != "pending" {
+		t.Fatalf("challenge status = %q, want still pending (ResolvePush must never have run)", status)
+	}
+}
+
 func TestPushFirstResponseWins(t *testing.T) {
 	srv := newTestServer(t)
 	u, err := srv.users.Create("sam", "pw-sam", users.RoleUser)
