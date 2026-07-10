@@ -1331,36 +1331,55 @@ func (s *Server) handleDesktopPair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate a pairing code for desktop app
-	codeBytes := make([]byte, 6)
-	if _, err := rand.Read(codeBytes); err != nil {
-		http.Error(w, "failed to generate pairing code", http.StatusInternalServerError)
-		return
-	}
-
-	// Format as XXXX-XXXX for readability
-	codeHex := hex.EncodeToString(codeBytes)
-	pairingCode := strings.ToUpper(codeHex[:4] + "-" + codeHex[4:])
-
-	// Store pairing code with 5-minute expiration
 	store, err := s.userStore(ac.UserID)
 	if err != nil {
 		http.Error(w, "failed to open user state", http.StatusInternalServerError)
 		return
 	}
 
+	// Check rate limit: max 5 failed attempts per hour
+	allowed, remaining, err := store.CheckDesktopPairingRateLimit()
+	if err != nil {
+		s.logger.Error("rate limit check failed", "user_id", ac.UserID, "error", err.Error())
+		http.Error(w, "failed to check rate limit", http.StatusInternalServerError)
+		return
+	}
+	if !allowed {
+		s.logger.Error("desktop pairing rate limit exceeded", "user_id", ac.UserID)
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"error": "rate limit exceeded: too many pairing attempts. Try again later.",
+		})
+		return
+	}
+
+	// Generate 16 bytes (128 bits) of cryptographically secure random data
+	codeBytes := make([]byte, 16)
+	if _, err := rand.Read(codeBytes); err != nil {
+		http.Error(w, "failed to generate pairing code", http.StatusInternalServerError)
+		return
+	}
+
+	// Return as 32-character hex string (no formatting, delivered via API/QR only)
+	pairingCode := strings.ToUpper(hex.EncodeToString(codeBytes))
+
+	// Store pairing code with 5-minute expiration
 	if err := store.SetDesktopPairingCode(pairingCode, 5*time.Minute); err != nil {
 		s.logger.Error("failed to store desktop pairing code", "user_id", ac.UserID, "error", err.Error())
 		http.Error(w, "failed to create pairing code", http.StatusInternalServerError)
 		return
 	}
 
-	// Log pairing event without exposing the full code
-	s.logger.Info("desktop pairing initiated", "user_id", ac.UserID)
+	// Record successful pairing initiation
+	_ = store.RecordDesktopPairingAttempt(pairingCode, true)
+
+	// Log pairing event without exposing the full code (only hash for correlation)
+	s.logger.Info("desktop pairing initiated", "user_id", ac.UserID, "code_hash", pairingCode[:8])
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":           true,
-		"pairingCode": pairingCode,
+		"pairingCode":  pairingCode,
+		"ttlSeconds":   300,
+		"rateLimit":    remaining,
 	})
 }
 

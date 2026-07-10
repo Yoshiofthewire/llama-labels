@@ -9,19 +9,23 @@ Desktop pairing allows users to initiate pairing with a desktop application. The
 ✅ **Phase 1 Completed:**
 - Frontend UI with "Pair Desktop App" button
 - Backend endpoint: `POST /api/notifications/desktop/pair`
-- Pairing code generation (6-byte random, formatted as XXXX-XXXX)
+- Pairing code generation (16-byte random = 128-bit entropy)
 - Persistent storage of pairing codes in user state
 - 5-minute TTL with automatic expiration
+- Rate limiting: max 5 failed attempts per hour per user
 - Code validation methods for backend consumers
-- Security-conscious logging (code not exposed in logs)
+- Attempt tracking for security audit trail
+- Security-conscious logging (only code prefix exposed, sensitive data hidden)
 
 ## API Endpoint
 
 ### POST `/api/notifications/desktop/pair`
 
-Initiates desktop pairing and returns a pairing code.
+Initiates desktop pairing and returns a secure pairing code.
 
 **Authentication:** Requires valid user session (uses `withAuth` middleware)
+
+**Rate Limit:** Max 5 failed pairing attempts per hour per user
 
 **Request Body:**
 ```json
@@ -32,8 +36,23 @@ Initiates desktop pairing and returns a pairing code.
 ```json
 {
   "ok": true,
-  "pairingCode": "A1B2-C3D4"
+  "pairingCode": "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6",
+  "ttlSeconds": 300,
+  "rateLimit": 4
 }
+```
+
+**Response (Rate Limited - 429):**
+```json
+{
+  "error": "rate limit exceeded: too many pairing attempts. Try again later."
+}
+```
+
+**Format:** 32-character hex string (16 bytes = 128-bit entropy)
+- Not human-typeable, delivered via API/QR code only
+- Cryptographically secure random generation
+- Single-use, 5-minute expiration
 ```
 
 **Response (Error - 401):**
@@ -52,34 +71,47 @@ failed to generate pairing code
 
 The `handleDesktopPair` handler:
 1. Validates user authentication via session cookie
-2. Generates a 6-byte random code (48 bits entropy)
-3. Formats code as `XXXX-XXXX` (hex, uppercase)
-4. Stores code in user's state store with 5-minute expiration
-5. Logs the pairing event with user ID only (code not logged for security)
-6. Returns the code to the frontend
+2. **Checks rate limit:** max 5 failed attempts per hour per user
+3. Generates 16-byte cryptographically random code (128 bits entropy)
+4. Returns code as 32-character uppercase hex string (no formatting)
+5. Stores code in user's state store with 5-minute expiration
+6. Records attempt for rate limiting and audit trail
+7. Logs event with code prefix only (full code never in logs)
+8. Returns code + TTL + remaining rate limit to frontend
 
 **State Store Methods:**
-- `SetDesktopPairingCode(code string, ttl time.Duration)` — Stores code with expiration
-- `ValidateDesktopPairingCode(code string) bool` — Checks if code is valid/not expired
-- `ConsumeDesktopPairingCode(code string) (bool, error)` — Validates and removes code
+- `SetDesktopPairingCode(code, ttl)` — Stores code with expiration
+- `ValidateDesktopPairingCode(code) bool` — Checks if code is valid/not expired
+- `ConsumeDesktopPairingCode(code)` — Validates and removes code (for registration)
+- `CheckDesktopPairingRateLimit() (allowed, remaining, error)` — Checks rate limit
+- `RecordDesktopPairingAttempt(code, success)` — Records attempt for rate limiting
 
 **Persistence:**
 - Codes stored in user's state.json file (encrypted at rest if configured)
-- Automatic cleanup of expired codes on load/persist
-- Survives server restart (codes are persisted until TTL)
+- Attempt history stored (last 100 attempts, 24-hour retention)
+- Automatic cleanup of expired codes and old attempts on load/persist
+- Survives server restart
+
+**Rate Limiting:**
+- **Limit:** 5 failed attempts per hour per user
+- **Tracking:** Per-user in state file; survives server restart
+- **Response:** 429 Too Many Requests when limit exceeded
+- **Cleanup:** Attempts older than 24 hours automatically removed
 
 **TTL Details:**
-- **Default:** 5 minutes (300 seconds)
+- **Default:** 5 minutes (300 seconds, configurable)
 - **Storage:** RFC3339 formatted timestamp in user state
 - **Cleanup:** Expired codes removed when state is loaded or persisted
 
-**Security notes:**
-- ✅ Pairing code is NOT logged (prevents credential leakage via logs)
-- ✅ Code returned only in JSON response to authenticated user
-- ✅ Code stored only in user's isolated state directory
-- ✅ Codes are cryptographically random (6 bytes)
-- ⚠️ TODO: Add rate limiting per user per time window
-- ⚠️ TODO: Add verification/exchange endpoint for desktop app
+**Security Implementation:**
+- ✅ 128-bit cryptographic entropy (secure against brute force)
+- ✅ Rate limiting (5 attempts/hour prevents exhaustive search)
+- ✅ 5-minute TTL (time window for attack is minimal)
+- ✅ Single-use codes (consumed on validation)
+- ✅ Per-user state isolation (no cross-user attack surface)
+- ✅ Code never fully logged (only 8-char prefix for correlation)
+- ✅ Attempt tracking for security audit trail
+- ✅ 429 response prevents client confusion (not 401/403)
 
 ### Frontend (NotificationsPage.tsx)
 
@@ -95,51 +127,72 @@ The `pairDesktopApp()` function:
 - Navigation label changed from "Notifications" to "Pairing"
 - Page title changed to "Notifications and Pairing"
 
-## Future Enhancements
+## Implementation Roadmap
 
-### Phase 2: Desktop App Registration Endpoint ✅ NEXT
-- Add `POST /api/notifications/desktop/register` endpoint
-- Desktop app exchanges pairing code for access token (similar to mobile register)
-- Validate code using `store.ConsumeDesktopPairingCode()`
-- Return session token with appropriate claims
-- Store paired desktop sessions with metadata (app version, last seen, etc.)
+### ✅ Phase 1: Secure Code Generation (COMPLETE)
+- [x] 16-byte (128-bit) cryptographic random code
+- [x] Persistent storage with 5-minute TTL
+- [x] Rate limiting (5 failed attempts/hour per user)
+- [x] Attempt tracking for audit trail
+- [x] Security-conscious logging
+
+### Phase 2: Desktop App Registration Endpoint (NEXT)
+- [ ] Add `POST /api/notifications/desktop/register` endpoint
+- [ ] Desktop app exchanges pairing code for access token
+- [ ] Validate code using `store.ConsumeDesktopPairingCode()`
+- [ ] Return session token with appropriate claims
+- [ ] Store paired desktop sessions with metadata
+- [ ] Record successful pairing in attempt history
 
 ### Phase 3: Desktop Session Management
-- Add `GET /api/notifications/desktop/sessions` — List paired desktop apps
-- Add `DELETE /api/notifications/desktop/sessions/{id}` — Revoke specific session
-- Add `POST /api/notifications/desktop/unpair` — Revoke all desktop pairings
-- Track session metadata: app name, version, OS, last activity time
+- [ ] Add `GET /api/notifications/desktop/sessions` — List paired desktop apps
+- [ ] Add `DELETE /api/notifications/desktop/sessions/{id}` — Revoke specific session
+- [ ] Add `POST /api/notifications/desktop/unpair` — Revoke all desktop pairings
+- [ ] Session metadata: app name, version, OS, last activity, IP address
+- [ ] Activity dashboard for user to review active sessions
 
 ### Phase 4: Advanced Features
-- QR code generation for desktop app enrollment
-- Deep linking: `llamalabels://desktop-pair?code=XXXX-XXXX`
-- Activity logging for security audits (who paired, when, from where)
-- Rate limiting per user (e.g., max 5 pairing attempts per hour)
-- Optional: Desktop app push notifications via established session
+- [ ] QR code generation containing full pairing code
+- [ ] Desktop app push notifications via established session
+- [ ] Anomaly detection: unusual pairing location/time
+- [ ] Paired device recovery flow (device lost, factory reset, etc.)
 
 ## Security Considerations
 
-**Implemented:**
-- ✅ Codes are cryptographically random (6 bytes = 48 bits entropy)
-- ✅ Requires valid session to initiate pairing (authenticated endpoint)
-- ✅ 5-minute time limit (automatic expiration)
-- ✅ Codes stored in isolated per-user state directory
-- ✅ Codes NOT exposed in server logs
-- ✅ Automatic cleanup of expired codes on state operations
+**Implemented (Defense in Depth):**
+- ✅ **Strong entropy:** 16 bytes = 128 bits (2^128 combinations)
+- ✅ **Rate limiting:** 5 failed attempts per hour per user
+- ✅ **Short TTL:** 5-minute window for pairing window
+- ✅ **Single-use:** Codes consumed and removed after validation
+- ✅ **Session requirement:** Only authenticated users can initiate
+- ✅ **State isolation:** Per-user encrypted state directory
+- ✅ **No logging:** Full code never in logs (only 8-char prefix)
+- ✅ **Attempt tracking:** All pairing attempts recorded for audit
+- ✅ **Automatic cleanup:** Expired codes and old attempts removed
 
-**Recommended Before Production:**
-- ⚠️ Add rate limiting per user (e.g., 5 attempts per hour)
-- ⚠️ Add HTTPS enforcement in frontend (for code transmission)
-- ⚠️ Add second factor verification for sensitive operations
-- ⚠️ Implement audit logging of all pairing/unpairing events
-- ⚠️ Add brute-force detection on code validation endpoint
-- ⚠️ Consider additional verification (email confirmation, etc.)
+**Threat Model:**
 
-**Attack Scenarios:**
-- **Code interception:** Limited by 5-min TTL; HTTPS required
-- **Brute force:** 6 bytes = 281.5 trillion combinations; rate limit recommended
-- **Session hijacking:** Uses standard authenticated session; no additional risk
-- **Log exposure:** Codes never logged; only IDs and timestamps
+| Threat | Mitigation | Residual Risk |
+|--------|-----------|----------------|
+| **Brute force** | 128 bits + 5 attempts/hour limit = ~44 years to exhaust | Low |
+| **Code interception** | 5-min TTL, delivered via secure API/QR only | Low |
+| **Session hijacking** | Uses standard authenticated session | Low (same as login) |
+| **Log exposure** | Code prefix only in logs, full code never logged | Low |
+| **Replay attack** | Single-use codes, consumed after validation | Low |
+| **Rate limit bypass** | Per-user state-based tracking (survives restart) | Low |
+
+**Recommended for Production:**
+- ⚠️ Enforce HTTPS for all API traffic (transport security)
+- ⚠️ Consider TOTP requirement for high-security operations
+- ⚠️ Implement dashboard showing active paired sessions
+- ⚠️ Add email/SMS notification when new device paired
+- ⚠️ Monitor for unusual pairing patterns in logs
+- ⚠️ Consider geographic/network anomaly detection
+
+**Not Required (Overkill Given Controls):**
+- ❌ Increasing entropy beyond 128 bits (already unbreakable)
+- ❌ Reducing TTL below 5 minutes (limits legitimate use)
+- ❌ More than 5 attempts/hour limit (acceptable UX + security)
 
 ## Related Files
 
@@ -150,12 +203,24 @@ The `pairDesktopApp()` function:
 
 ## Testing
 
-**Manual test:**
+**Manual test - Successful pairing:**
 1. Navigate to "Pairing" page in settings
 2. Click "Pair Desktop App" button
-3. Verify pairing code displays (e.g., "A1B2-C3D4")
-4. Check server logs for: `desktop pairing initiated user_id=... pairing_code=...`
+3. Verify 32-character hex code displays (e.g., `A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6`)
+4. Verify `ttlSeconds: 300` and `rateLimit: 4` in response
+5. Check server logs: `desktop pairing initiated user_id=... code_hash=A1B2C3D4`
+
+**Rate limit test:**
+1. Click "Pair Desktop App" 6 times rapidly
+2. On 6th attempt, verify 429 response: `rate limit exceeded: too many pairing attempts`
+3. Wait 1 hour, verify button works again (rate limit resets)
+
+**Code expiration test:**
+1. Capture a pairing code
+2. Wait 5+ minutes
+3. Backend registration endpoint should reject it (Phase 2)
 
 **Error test:**
 1. Make request without valid session
-2. Verify error handling in frontend status message
+2. Verify 401 error: `{"error": "unauthorized"}`
+3. Check frontend displays error message

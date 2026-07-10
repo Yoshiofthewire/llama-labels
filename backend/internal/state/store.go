@@ -34,6 +34,14 @@ type Store struct {
 	aiCreditsExhaustedAt string
 	desktopPairingCodes map[string]string // code -> expiresAt (RFC3339)
 	pairingCodesDirty   bool
+	desktopPairingAttempts []PairingAttempt // tracks failed pairing attempts for rate limiting
+	pairingAttemptsDirty   bool
+}
+
+type PairingAttempt struct {
+	Code      string `json:"code"`      // the pairing code that was attempted
+	AttemptAt string `json:"attemptAt"` // RFC3339 timestamp
+	Success   bool   `json:"success"`   // whether the attempt succeeded
 }
 
 // Native notification delivery modes. "push" (the default) sends via the
@@ -98,17 +106,18 @@ type PullNotification struct {
 }
 
 type stateFile struct {
-	LastCheckpoint       string                     `json:"lastCheckpoint"`
-	Processed            map[string]string          `json:"processed"`
-	Notifications        []NotificationSubscription `json:"notifications,omitempty"`
-	NativeDevices        []NativeDevice             `json:"nativeDevices,omitempty"`
-	SubscriberID         string                     `json:"subscriberId,omitempty"`
-	NativeDeliveryMode   string                     `json:"nativeDeliveryMode,omitempty"`
-	PullNotifications    []PullNotification         `json:"pullNotifications,omitempty"`
-	PullSeq              int64                      `json:"pullSeq,omitempty"`
-	AICreditsExhausted   bool                       `json:"aiCreditsExhausted,omitempty"`
-	AICreditsExhaustedAt string                     `json:"aiCreditsExhaustedAt,omitempty"`
-	DesktopPairingCodes  map[string]string          `json:"desktopPairingCodes,omitempty"`
+	LastCheckpoint         string                     `json:"lastCheckpoint"`
+	Processed              map[string]string          `json:"processed"`
+	Notifications          []NotificationSubscription `json:"notifications,omitempty"`
+	NativeDevices          []NativeDevice             `json:"nativeDevices,omitempty"`
+	SubscriberID           string                     `json:"subscriberId,omitempty"`
+	NativeDeliveryMode     string                     `json:"nativeDeliveryMode,omitempty"`
+	PullNotifications      []PullNotification         `json:"pullNotifications,omitempty"`
+	PullSeq                int64                      `json:"pullSeq,omitempty"`
+	AICreditsExhausted     bool                       `json:"aiCreditsExhausted,omitempty"`
+	AICreditsExhaustedAt   string                     `json:"aiCreditsExhaustedAt,omitempty"`
+	DesktopPairingCodes    map[string]string          `json:"desktopPairingCodes,omitempty"`
+	DesktopPairingAttempts []PairingAttempt           `json:"desktopPairingAttempts,omitempty"`
 }
 
 func New(baseDir string) (*Store, error) {
@@ -116,10 +125,11 @@ func New(baseDir string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{
-		baseDir:              baseDir,
-		processedSet:         map[string]time.Time{},
-		decisions:            []Decision{},
-		desktopPairingCodes: map[string]string{},
+		baseDir:                 baseDir,
+		processedSet:            map[string]time.Time{},
+		decisions:               []Decision{},
+		desktopPairingCodes:    map[string]string{},
+		desktopPairingAttempts: []PairingAttempt{},
 	}
 	if err := s.load(); err != nil {
 		return nil, err
@@ -192,6 +202,21 @@ func (s *Store) applyStateFile(sf stateFile) {
 	}
 	s.desktopPairingCodes = validCodes
 	s.pairingCodesDirty = len(validCodes) < len(sf.DesktopPairingCodes)
+
+	// Load pairing attempts, removing old ones (keep last 24 hours for rate limiting)
+	cutoff := now.Add(-24 * time.Hour)
+	validAttempts := make([]PairingAttempt, 0, len(sf.DesktopPairingAttempts))
+	for _, attempt := range sf.DesktopPairingAttempts {
+		attemptAt, err := time.Parse(time.RFC3339, attempt.AttemptAt)
+		if err != nil {
+			continue
+		}
+		if attemptAt.After(cutoff) {
+			validAttempts = append(validAttempts, attempt)
+		}
+	}
+	s.desktopPairingAttempts = validAttempts
+	s.pairingAttemptsDirty = len(validAttempts) < len(sf.DesktopPairingAttempts)
 }
 
 func (s *Store) refreshStateFromDiskLocked() error {
@@ -478,17 +503,18 @@ func (s *Store) persistLocked() error {
 		processed[id] = ts.Format(time.RFC3339)
 	}
 	b, err := json.MarshalIndent(stateFile{
-		LastCheckpoint:       s.checkpoint,
-		Processed:            processed,
-		Notifications:        s.notifications,
-		NativeDevices:        s.nativeDevices,
-		SubscriberID:         s.subscriberID,
-		NativeDeliveryMode:   s.nativeDeliveryMode,
-		PullNotifications:    s.pullNotifications,
-		PullSeq:              s.pullSeq,
-		AICreditsExhausted:   s.aiCreditsExhausted,
-		AICreditsExhaustedAt: s.aiCreditsExhaustedAt,
-		DesktopPairingCodes:  s.desktopPairingCodes,
+		LastCheckpoint:         s.checkpoint,
+		Processed:              processed,
+		Notifications:          s.notifications,
+		NativeDevices:          s.nativeDevices,
+		SubscriberID:           s.subscriberID,
+		NativeDeliveryMode:     s.nativeDeliveryMode,
+		PullNotifications:      s.pullNotifications,
+		PullSeq:                s.pullSeq,
+		AICreditsExhausted:     s.aiCreditsExhausted,
+		AICreditsExhaustedAt:   s.aiCreditsExhaustedAt,
+		DesktopPairingCodes:    s.desktopPairingCodes,
+		DesktopPairingAttempts: s.desktopPairingAttempts,
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -805,6 +831,65 @@ func (s *Store) ConsumeDesktopPairingCode(code string) (bool, error) {
 		return true, err
 	}
 	return true, nil
+}
+
+// CheckDesktopPairingRateLimit checks if a user can attempt pairing.
+// Rate limit: max 5 failed attempts per hour.
+// Returns (allowed bool, attemptsRemaining int, error)
+func (s *Store) CheckDesktopPairingRateLimit() (bool, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.refreshStateFromDiskLocked(); err != nil {
+		return false, 0, err
+	}
+
+	now := time.Now().UTC()
+	oneHourAgo := now.Add(-1 * time.Hour)
+
+	// Count failed attempts in the last hour
+	failedCount := 0
+	for _, attempt := range s.desktopPairingAttempts {
+		attemptAt, err := time.Parse(time.RFC3339, attempt.AttemptAt)
+		if err != nil {
+			continue
+		}
+		if !attempt.Success && attemptAt.After(oneHourAgo) {
+			failedCount++
+		}
+	}
+
+	const maxFailedAttempts = 5
+	allowed := failedCount < maxFailedAttempts
+	remaining := maxFailedAttempts - failedCount
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	return allowed, remaining, nil
+}
+
+// RecordDesktopPairingAttempt records a pairing attempt for rate limiting.
+func (s *Store) RecordDesktopPairingAttempt(code string, success bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.refreshStateFromDiskLocked(); err != nil {
+		return err
+	}
+
+	attempt := PairingAttempt{
+		Code:      strings.TrimSpace(code),
+		AttemptAt: time.Now().UTC().Format(time.RFC3339),
+		Success:   success,
+	}
+	s.desktopPairingAttempts = append(s.desktopPairingAttempts, attempt)
+
+	// Keep only last 100 attempts to avoid unbounded growth
+	if len(s.desktopPairingAttempts) > 100 {
+		s.desktopPairingAttempts = s.desktopPairingAttempts[len(s.desktopPairingAttempts)-100:]
+	}
+
+	s.pairingAttemptsDirty = true
+	return s.persistLocked()
 }
 
 func newUUIDv4() (string, error) {
