@@ -3,6 +3,8 @@
 .env.*
 !.env.example
 
+APNS_RELAY_DEPLOYMENT.md
+
 # OS/editor noise
 .DS_Store
 Thumbs.db
@@ -41,3 +43,7 @@ share/ollama/models/
 **/GoogleService-Info.plist
 **/firebase-service-account*.json
 **/service-account*.json
+
+# Claude Code / superpowers session artifacts
+.superpowers/
+docs/superpowers/
