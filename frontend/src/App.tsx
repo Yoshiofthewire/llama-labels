@@ -543,7 +543,7 @@ export function App() {
   const isAdmin = auth.role === "admin";
 
   function protect(element: JSX.Element, adminOnly = false) {
-    if (!auth.authenticated) {
+    if (!auth?.authenticated) {
       return <Navigate to="/login" replace />;
     }
     if (adminOnly && !isAdmin) {
@@ -767,12 +767,12 @@ export function App() {
               ) : (
                 <span title="This site is already installed as a PWA">PWA Installed</span>
               )}
-              {auth.authenticated ? (
-                <button type="button" className="nav-link-button" onClick={logout}>
-                  Logout
-                </button>
-              ) : null}
             </div>
+          ) : null}
+          {auth.authenticated ? (
+            <button type="button" className="nav-link-button nav-heading" onClick={logout}>
+              Logout
+            </button>
           ) : null}
         </nav>
         <div className="sidebar-footer">

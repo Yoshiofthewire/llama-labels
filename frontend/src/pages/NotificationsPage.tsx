@@ -306,7 +306,7 @@ export function NotificationsPage() {
     }
   }
 
-  function base64URLToUint8Array(base64URL: string): Uint8Array {
+  function base64URLToUint8Array(base64URL: string): Uint8Array<ArrayBuffer> {
     const normalized = base64URL.replace(/-/g, "+").replace(/_/g, "/");
     const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
     const raw = window.atob(padded);

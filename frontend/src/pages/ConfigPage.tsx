@@ -239,6 +239,7 @@ export function ConfigPage() {
   }
 
   async function saveConfig() {
+    if (!cfg) return;
     const next: AppConfig = {
       ...cfg,
       labels: {
