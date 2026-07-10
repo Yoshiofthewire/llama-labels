@@ -23,7 +23,7 @@ const settingsNavItems: ReadonlyArray<{ to: string; label: string; adminOnly?: b
   { to: "/login", label: "Login" },
   { to: "/health", label: "System Health" },
   { to: "/config", label: "Configuration" },
-  { to: "/notifications", label: "Notifications" },
+  { to: "/notifications", label: "Pairing" },
   { to: "/security", label: "Security" },
   { to: "/tuning", label: "Prompt Tuning" },
   { to: "/users", label: "Manage Users", adminOnly: true },

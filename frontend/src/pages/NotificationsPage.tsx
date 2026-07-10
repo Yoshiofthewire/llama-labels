@@ -162,6 +162,7 @@ export function NotificationsPage() {
   const [pairingRefreshBusy, setPairingRefreshBusy] = useState(false);
   const [deliveryMode, setDeliveryMode] = useState<NativeDeliveryMode>("push");
   const [deliveryModeBusy, setDeliveryModeBusy] = useState(false);
+  const [desktopPairingBusy, setDesktopPairingBusy] = useState(false);
 
   const statusTone = status.toLowerCase().includes("failed") ? "notice notice-error" : "notice notice-success";
 
@@ -481,6 +482,23 @@ export function NotificationsPage() {
     }
   }
 
+  async function pairDesktopApp() {
+    setDesktopPairingBusy(true);
+    try {
+      const result = await postJSON<{ ok: boolean; pairingCode?: string }>("/api/notifications/desktop/pair", {});
+      if (result.pairingCode) {
+        setStatus(`Desktop pairing initiated. Code: ${result.pairingCode}`);
+      } else {
+        setStatus("Desktop pairing initiated. Check your desktop app.");
+      }
+    } catch (error: unknown) {
+      const detail = toErrorMessage(error, "unknown error");
+      setStatus(`Failed to initiate desktop pairing: ${detail}`);
+    } finally {
+      setDesktopPairingBusy(false);
+    }
+  }
+
   function setMode(mode: NotificationPrefs["mode"]) {
     setPrefs((prev) => {
       if (!prev) {
@@ -530,7 +548,7 @@ export function NotificationsPage() {
   return (
     <section className="panel notifications-page">
       <div className="notifications-hero">
-        <h2>Notifications</h2>
+        <h2>Notifications and Pairing</h2>
         <p>Choose how alerts are delivered and preselect IMAP keywords any time.</p>
       </div>
 
@@ -679,8 +697,8 @@ export function NotificationsPage() {
                   <strong>{pairingStatus.subscriberId || "Not available"}</strong>
                 </div>
 
-                <button type="button" className="notifications-ghost" onClick={() => void revokePairedDevices()} disabled={unpairBusy}>
-                  {unpairBusy ? "Revoking..." : "Revoke Paired Devices"}
+                <button type="button" className="notifications-ghost" onClick={() => void pairDesktopApp()} disabled={desktopPairingBusy}>
+                  {desktopPairingBusy ? "Pairing..." : "Pair Desktop App"}
                 </button>
               </div>
 
@@ -749,6 +767,9 @@ export function NotificationsPage() {
       </div>
 
       <div className="notifications-footer">
+        <button type="button" className="notifications-ghost" onClick={() => void revokePairedDevices()} disabled={unpairBusy || testBusy}>
+          {unpairBusy ? "Revoking..." : "Revoke Paired Devices"}
+        </button>
         <button type="button" className="notifications-ghost" onClick={() => void unsubscribeThisDevice()} disabled={unsubscribeBusy || testBusy}>
           {unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe This Device"}
         </button>
