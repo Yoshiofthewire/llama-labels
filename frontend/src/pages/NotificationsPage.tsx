@@ -100,15 +100,6 @@ function buildNativePairingLink(pairing: PairingStatusResponse): string {
   return `llamalabels://native-pair?${params.toString()}`;
 }
 
-function buildDesktopPairingLink(pairingCode: string, serverUrl?: string): string {
-  const params = new URLSearchParams();
-  params.set("code", pairingCode);
-  if (serverUrl) {
-    params.set("srv", serverUrl);
-  }
-  return `llamalabels://desktop-pair?${params.toString()}`;
-}
-
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -491,37 +482,41 @@ export function NotificationsPage() {
   }
 
   async function pairDesktopApp() {
+    // Desktop apps pair over the same native flow as mobile (sub/hash relay
+    // auth) — the desktop-pair code exchange has no server-side register
+    // endpoint yet, and the desktop app doesn't need a web session.
     setDesktopPairingBusy(true);
     try {
-      const result = await postJSON<{
-        ok: boolean;
-        pairingCode?: string;
-        ttlSeconds?: number;
-      }>("/api/notifications/desktop/pair", {});
+      // Fetch a fresh pairing token — they expire quickly, so a stale
+      // pairingStatus from page load may already be dead.
+      const next = await getJSON<PairingStatusResponse>("/api/notifications/pairing");
+      applyPairingStatus(next);
 
-      if (!result.pairingCode) {
-        setStatus("Failed to generate pairing code.");
+      if (!next.configured || !next.pairingToken) {
+        setStatus(`Failed to initiate desktop pairing: ${next.configurationError || "pairing is not configured"}`);
         return;
       }
 
-      // Get current server URL for deep link
-      const serverUrl = window.location.origin;
-      const deepLink = buildDesktopPairingLink(result.pairingCode, serverUrl);
+      const deepLink = buildNativePairingLink(next);
+      const ttlSeconds = typeof next.pairingTtlSeconds === "number" && next.pairingTtlSeconds > 0
+        ? next.pairingTtlSeconds
+        : DEFAULT_PAIRING_TTL_SECONDS;
 
-      // Attempt to launch desktop app via deep link
+      // Attempt to launch the desktop app via deep link
       try {
         window.location.href = deepLink;
-        setStatus(`Launching desktop app with pairing code (valid for ${result.ttlSeconds ?? 300} seconds)...`);
+        setStatus(`Launching desktop app with pairing link (valid for ${ttlSeconds} seconds)...`);
 
-        // Fallback: if desktop app not installed, show code after a delay
+        // Fallback: if the desktop app didn't take focus, offer the link for
+        // manual pasting into the app's pairing screen.
         setTimeout(() => {
           if (document.hasFocus()) {
-            setStatus(`Desktop app not detected. Share this code: ${result.pairingCode}`);
+            setStatus(`Desktop app not detected. Paste this link into the app's pairing screen: ${deepLink}`);
           }
         }, 2000);
       } catch {
         // Fallback if deep link launch fails
-        setStatus(`Desktop app not installed. Pairing code: ${result.pairingCode}`);
+        setStatus(`Desktop app not installed. Pairing link: ${deepLink}`);
       }
     } catch (error: unknown) {
       const detail = toErrorMessage(error, "unknown error");
