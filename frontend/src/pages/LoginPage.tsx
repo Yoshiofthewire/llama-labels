@@ -19,7 +19,7 @@ type LoginPageProps = {
 
 export function LoginPage({ auth, onAuthChanged, mode = "login" }: LoginPageProps) {
   const navigate = useNavigate();
-  const [username, setUsername] = useState("admin");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
