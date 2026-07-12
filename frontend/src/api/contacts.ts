@@ -163,3 +163,44 @@ export type CardDAVClientSyncResult = {
 export function syncCardDAVClient(): Promise<CardDAVClientSyncResult> {
   return postJSON<CardDAVClientSyncResult>("/api/contacts/carddav-client/sync", {});
 }
+
+type BulkDeleteFailure = {
+  id: string;
+  error: string;
+};
+
+type BulkDeleteResult = {
+  ok: boolean;
+  processed: number;
+  failed: BulkDeleteFailure[];
+};
+
+export function bulkDeleteContacts(ids: string[]): Promise<BulkDeleteResult> {
+  return postJSON<BulkDeleteResult>("/api/contacts/bulk-delete", { ids });
+}
+
+export function exportContactsUrl(format: "vcard" | "csv"): string {
+  return `/api/contacts/export?format=${encodeURIComponent(format)}`;
+}
+
+type ImportResult = {
+  imported: number;
+  skipped: number;
+  errors: string[];
+};
+
+export async function importContacts(file: File): Promise<ImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch("/api/contacts/import", {
+    method: "POST",
+    body: formData
+  });
+
+  if (!response.ok) {
+    throw new Error(`Import failed: ${response.statusText}`);
+  }
+
+  return response.json() as Promise<ImportResult>;
+}

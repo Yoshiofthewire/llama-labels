@@ -1,9 +1,12 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toErrorMessage } from "../api/client";
 import {
+  bulkDeleteContacts,
   createContact,
   dedupeContacts,
   deleteContact,
+  exportContactsUrl,
+  importContacts,
   listContacts,
   updateContact,
   type Contact,
@@ -104,6 +107,7 @@ export function ContactsPage() {
   const [status, setStatus] = useState("");
   const [busyId, setBusyId] = useState("");
   const [deduping, setDeduping] = useState(false);
+  const [search, setSearch] = useState("");
 
   const [form, setForm] = useState<FormState>(emptyFormState);
   const [editingUid, setEditingUid] = useState("");
@@ -111,17 +115,46 @@ export function ContactsPage() {
 
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [selectedUids, setSelectedUids] = useState<string[]>([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const contactDialogRef = useRef<HTMLDialogElement | null>(null);
   const contactFormDialogRef = useRef<HTMLDialogElement | null>(null);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const statusTone = status.toLowerCase().includes("failed") ? "notice notice-error" : "notice notice-success";
   const editingContact = editingUid ? contacts.find((c) => c.uid === editingUid) ?? null : null;
 
+  const filteredContacts = useMemo(() => {
+    if (!search.trim()) {
+      return contacts;
+    }
+    const lowerQuery = search.toLowerCase();
+    return contacts.filter((contact) => {
+      const searchableText = [
+        contact.fn,
+        contact.givenName,
+        contact.familyName,
+        contact.org,
+        ...(contact.emails?.map((e) => e.value) ?? []),
+        ...(contact.phones?.map((p) => p.value) ?? [])
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return searchableText.includes(lowerQuery);
+    });
+  }, [contacts, search]);
+
   const { currentPage, setCurrentPage, totalPages, pageItems: pageContacts } = usePagination(
-    contacts,
+    filteredContacts,
     CONTACTS_PER_PAGE
   );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, setCurrentPage]);
 
   async function loadContacts(): Promise<Contact[]> {
     const next = await listContacts();
@@ -265,6 +298,63 @@ export function ContactsPage() {
     }
   }
 
+  async function deleteBulk() {
+    if (!window.confirm(`Delete ${selectedUids.length} contact${selectedUids.length === 1 ? "" : "s"}?`)) {
+      return;
+    }
+    setBulkDeleting(true);
+    setStatus("");
+    try {
+      const result = await bulkDeleteContacts(selectedUids);
+      setSelectedUids([]);
+      setStatus(`Deleted ${result.processed} contact${result.processed === 1 ? "" : "s"}.`);
+      await refresh();
+    } catch (error: unknown) {
+      setStatus(`Failed to delete contacts: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
+  async function handleImportFile() {
+    const file = importFileInputRef.current?.files?.[0];
+    if (!file) return;
+
+    setImporting(true);
+    setStatus("");
+    try {
+      const result = await importContacts(file);
+      setStatus(`Imported ${result.imported} contact${result.imported === 1 ? "" : "s"}.${result.errors.length > 0 ? ` (${result.errors.length} error${result.errors.length === 1 ? "" : "s"})` : ""}`);
+      await refresh();
+      if (importFileInputRef.current) {
+        importFileInputRef.current.value = "";
+      }
+    } catch (error: unknown) {
+      setStatus(`Failed to import contacts: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  const allPageSelected = pageContacts.length > 0 && pageContacts.every((c) => selectedUids.includes(c.uid));
+  const somePageSelected = pageContacts.some((c) => selectedUids.includes(c.uid));
+
+  function toggleAllOnPage() {
+    if (allPageSelected) {
+      setSelectedUids(selectedUids.filter((uid) => !pageContacts.some((c) => c.uid === uid)));
+    } else {
+      const newUids = new Set(selectedUids);
+      pageContacts.forEach((c) => newUids.add(c.uid));
+      setSelectedUids(Array.from(newUids));
+    }
+  }
+
+  function toggleContact(uid: string) {
+    setSelectedUids(
+      selectedUids.includes(uid) ? selectedUids.filter((u) => u !== uid) : [...selectedUids, uid]
+    );
+  }
+
   return (
     <section className="panel contacts-page">
       <header className="contacts-header">
@@ -289,6 +379,41 @@ export function ContactsPage() {
               {deduping ? "Merging..." : "Merge Duplicates"}
             </button>
           ) : null}
+          {!loading && selectedUids.length > 0 ? (
+            <button
+              type="button"
+              className="contacts-action contacts-action-danger"
+              onClick={() => void deleteBulk()}
+              disabled={bulkDeleting}
+            >
+              {bulkDeleting ? "Deleting..." : `Delete Selected (${selectedUids.length})`}
+            </button>
+          ) : null}
+          {!loading && contacts.length > 0 ? (
+            <>
+              <a href={exportContactsUrl("vcard")} className="contacts-action" download="contacts.vcf">
+                Export vCard
+              </a>
+              <a href={exportContactsUrl("csv")} className="contacts-action" download="contacts.csv">
+                Export CSV
+              </a>
+              <button
+                type="button"
+                className="contacts-action"
+                onClick={() => importFileInputRef.current?.click()}
+                disabled={importing}
+              >
+                {importing ? "Importing..." : "Import"}
+              </button>
+              <input
+                ref={importFileInputRef}
+                type="file"
+                accept=".vcf"
+                onChange={() => void handleImportFile()}
+                style={{ display: "none" }}
+              />
+            </>
+          ) : null}
           <button type="button" onClick={openCreateForm}>
             New Contact
           </button>
@@ -298,11 +423,37 @@ export function ContactsPage() {
       <div className="contacts-card contacts-list-card">
         <div className="contacts-list-head">
           <h3>Address Book</h3>
-          {!loading && contacts.length > 0 ? <span className="contacts-count">{contacts.length}</span> : null}
+          {!loading && contacts.length > 0 ? (
+            <span className="contacts-count">
+              {filteredContacts.length}
+              {search.trim() ? ` of ${contacts.length}` : ""}
+            </span>
+          ) : null}
         </div>
+
+        {!loading && contacts.length > 0 ? (
+          <div style={{ marginBottom: "12px" }}>
+            <input
+              type="text"
+              placeholder="Search by name, email, phone, or organization..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "8px",
+                borderRadius: "4px",
+                border: "1px solid var(--border-color)",
+                backgroundColor: "var(--bg-color)"
+              }}
+            />
+          </div>
+        ) : null}
 
         {loading ? <p className="contacts-muted">Loading contacts...</p> : null}
         {!loading && contacts.length === 0 ? <div className="contacts-empty">No contacts yet.</div> : null}
+        {!loading && contacts.length > 0 && filteredContacts.length === 0 ? (
+          <div className="contacts-empty">No contacts match your search.</div>
+        ) : null}
 
         {!loading && contacts.length > 0 ? (
           <>
@@ -319,6 +470,15 @@ export function ContactsPage() {
                 <table className="contacts-table">
                   <thead>
                     <tr>
+                      <th style={{ width: "40px", textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={allPageSelected}
+                          indeterminate={somePageSelected && !allPageSelected}
+                          onChange={() => toggleAllOnPage()}
+                          aria-label="Select all on page"
+                        />
+                      </th>
                       <th>Name</th>
                       <th>Contact Info</th>
                       <th className="contacts-col-actions">Actions</th>
@@ -327,12 +487,21 @@ export function ContactsPage() {
                   <tbody>
                     {pageContacts.map((contact) => {
                       const busy = busyId === contact.uid;
+                      const isSelected = selectedUids.includes(contact.uid);
                       return (
                         <tr
                           key={contact.uid}
                           className={busy ? "contacts-row contacts-row-busy" : "contacts-row"}
                           onClick={() => setSelectedContact(contact)}
                         >
+                          <td style={{ width: "40px", textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleContact(contact.uid)}
+                              aria-label={`Select ${contact.fn}`}
+                            />
+                          </td>
                           <td>
                             <button
                               type="button"

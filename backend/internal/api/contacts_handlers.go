@@ -161,6 +161,62 @@ func (s *Server) handleContactByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleContactsBulkDelete deletes multiple contacts in the caller's own
+// address book, returning a report of successes and failures.
+func (s *Server) handleContactsBulkDelete(w http.ResponseWriter, r *http.Request) {
+	store, err := s.contactsFor(r)
+	if err != nil {
+		http.Error(w, "failed to open contacts store", http.StatusInternalServerError)
+		return
+	}
+
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	uniqueIDs := make([]string, 0, len(req.IDs))
+	seen := map[string]bool{}
+	for _, uid := range req.IDs {
+		clean := strings.TrimSpace(uid)
+		if clean == "" {
+			continue
+		}
+		if seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		uniqueIDs = append(uniqueIDs, clean)
+	}
+	if len(uniqueIDs) == 0 {
+		http.Error(w, "at least one id is required", http.StatusBadRequest)
+		return
+	}
+
+	type bulkDeleteFailure struct {
+		ID    string `json:"id"`
+		Error string `json:"error"`
+	}
+	failures := make([]bulkDeleteFailure, 0)
+	processed := 0
+	for _, uid := range uniqueIDs {
+		if _, err := store.Delete(uid); err != nil {
+			failures = append(failures, bulkDeleteFailure{ID: uid, Error: err.Error()})
+			continue
+		}
+		processed++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":        len(failures) == 0,
+		"processed": processed,
+		"failed":    failures,
+	})
+}
+
 // davPasswordFile is the on-disk shape of the caller's app-specific CardDAV
 // password (a scrypt hash, never the raw secret — the raw value is shown
 // exactly once at generation time).
