@@ -32,6 +32,10 @@ func (s *stubMailClient) ListOverviews(_ context.Context, _ string, _ int) ([]im
 	return nil, nil
 }
 
+func (s *stubMailClient) SearchMessages(_ context.Context, _ string, _ string, _ string, _ int) ([]imapadapter.Overview, error) {
+	return nil, nil
+}
+
 func (s *stubMailClient) GetMessageBodies(_ context.Context, _ string, _ []int) (map[int]imapadapter.MessageContent, error) {
 	return nil, nil
 }

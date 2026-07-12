@@ -104,6 +104,9 @@ type Client interface {
 	// in mailbox, without a body fetch — the selective, cheap counterpart
 	// to ListUnreadMessages used by the mail cache's live-diff path.
 	ListOverviews(ctx context.Context, mailbox string, limit int) ([]Overview, error)
+	// SearchMessages searches messages in mailbox by field (sender/subject/body/all)
+	// and returns the newest N matching messages as Overview objects.
+	SearchMessages(ctx context.Context, mailbox, field, query string, limit int) ([]Overview, error)
 	// GetMessageBodies fetches body content and attachment presence for
 	// exactly the given UIDs — called only for UIDs the mail cache reports as
 	// genuinely new.
@@ -497,6 +500,86 @@ func (c *APIClient) ListOverviews(ctx context.Context, mailbox string, limit int
 	}
 
 	sort.Ints(uids)
+
+	overviews, err := d.GetOverviews(uids...)
+	if err != nil {
+		return nil, fmt.Errorf("imap fetch overviews: %w", err)
+	}
+
+	out := make([]Overview, 0, len(uids))
+	for i := len(uids) - 1; i >= 0; i-- {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		uid := uids[i]
+		e := overviews[uid]
+		if e == nil {
+			continue
+		}
+		out = append(out, overviewFromEmail(uid, e))
+	}
+	return out, nil
+}
+
+// SearchMessages searches for messages in mailbox by field (sender/subject/body/all)
+// and returns the newest N matching messages as Overview objects.
+func (c *APIClient) SearchMessages(ctx context.Context, mailbox, field, query string, limit int) ([]Overview, error) {
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	mailbox = strings.TrimSpace(mailbox)
+	field = strings.ToLower(strings.TrimSpace(field))
+	query = strings.TrimSpace(query)
+
+	if query == "" {
+		return []Overview{}, nil
+	}
+
+	d, err := c.ensureConnectedLocked()
+	if err != nil {
+		return nil, err
+	}
+	if mailbox != "" && !strings.EqualFold(mailbox, c.mailbox) {
+		if err := d.SelectFolder(mailbox); err != nil {
+			return nil, fmt.Errorf("imap select folder %q: %w", mailbox, err)
+		}
+	}
+
+	sb := goimap.Search()
+	switch field {
+	case "subject":
+		sb.Subject(query)
+	case "sender", "from":
+		sb.From(query)
+	case "body":
+		sb.Body(query)
+	default:
+		sb.Text(query)
+	}
+
+	uids, err := d.SearchUIDs(sb)
+	if err != nil {
+		return nil, fmt.Errorf("imap search: %w", err)
+	}
+	if len(uids) == 0 {
+		return []Overview{}, nil
+	}
+
+	sort.Ints(uids)
+
+	// Keep only the last (newest) `limit` results
+	if len(uids) > limit {
+		uids = uids[len(uids)-limit:]
+	}
 
 	overviews, err := d.GetOverviews(uids...)
 	if err != nil {

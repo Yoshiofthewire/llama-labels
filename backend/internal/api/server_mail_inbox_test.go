@@ -49,6 +49,10 @@ func (f *fakeMailClient) ListOverviews(_ context.Context, _ string, _ int) ([]im
 	return f.overviews, f.overviewsErr
 }
 
+func (f *fakeMailClient) SearchMessages(_ context.Context, _ string, _ string, _ string, _ int) ([]imapadapter.Overview, error) {
+	return []imapadapter.Overview{}, nil
+}
+
 func (f *fakeMailClient) GetMessageBodies(_ context.Context, _ string, uids []int) (map[int]imapadapter.MessageContent, error) {
 	f.bodiesCalls++
 	f.lastBodyUIDs = append([]int{}, uids...)

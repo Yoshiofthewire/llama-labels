@@ -159,6 +159,7 @@ func (s *Server) Run() error {
 	mux.HandleFunc("PUT /api/inbox/folders", s.withMailAuth(s.handleInboxFolders))
 	mux.HandleFunc("DELETE /api/inbox/folders", s.withMailAuth(s.handleInboxFolders))
 	mux.HandleFunc("POST /api/inbox/actions", s.withMailAuth(s.handleInboxActions))
+	mux.HandleFunc("GET /api/mail/search", s.withMailAuth(s.handleMailSearch))
 	mux.HandleFunc("GET /api/logs", s.withAdmin(s.handleLogs))
 	mux.HandleFunc("GET /api/logs/list", s.withAdmin(s.handleLogsList))
 	mux.HandleFunc("GET /api/users", s.withAdmin(s.handleUsersList))
@@ -2255,6 +2256,85 @@ func (s *Server) handleInboxActions(w http.ResponseWriter, r *http.Request) {
 		"processed":     processed,
 		"failed":        failures,
 		"targetMailbox": targetMailbox,
+	})
+}
+
+func (s *Server) handleMailSearch(w http.ResponseWriter, r *http.Request) {
+	mailClient, err := s.mailFor(r)
+	if err != nil {
+		if errors.Is(err, errIMAPNotConfigured) {
+			http.Error(w, "imap configuration is required", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "imap client is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	q := r.URL.Query().Get("q")
+	if strings.TrimSpace(q) == "" {
+		http.Error(w, "q parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	field := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("field")))
+	if field == "" {
+		field = "all"
+	}
+	if field != "subject" && field != "sender" && field != "from" && field != "body" && field != "all" {
+		http.Error(w, "invalid field parameter", http.StatusBadRequest)
+		return
+	}
+
+	mailbox := strings.TrimSpace(r.URL.Query().Get("mailbox"))
+	if mailbox == "" {
+		mailbox = "INBOX"
+	}
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	s.mu.RLock()
+	cfg := s.cfg
+	s.mu.RUnlock()
+	allowedKeywords := collectAllowedKeywords(cfg)
+
+	results, err := mailClient.SearchMessages(r.Context(), mailbox, field, q, limit)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("search failed: %v", err), http.StatusServiceUnavailable)
+		return
+	}
+
+	// Convert Overview to inboxEmail wire format, mirroring handleInbox's label-bucketing
+	out := make([]any, 0, len(results))
+	for _, overview := range results {
+		label := firstMatchingKeyword(overview.Keywords, allowedKeywords)
+		if label == "" {
+			label = inboxUncategorizedTab
+		}
+		out = append(out, inboxEmail{
+			MessageID:      overview.MessageID,
+			Subject:        overview.Subject,
+			Sender:         overview.Sender,
+			SentTo:         overview.SentTo,
+			CC:             overview.CC,
+			BCC:            overview.BCC,
+			Label:          label,
+			Status:         overview.Status,
+			AtUTC:          overview.AtUTC,
+			HasAttachments: false,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"results": out,
 	})
 }
 

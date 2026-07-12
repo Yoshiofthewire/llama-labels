@@ -267,6 +267,11 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
   const [clockTick, setClockTick] = useState(0);
   const [swipeRows, setSwipeRows] = useState<Record<string, SwipeRowState>>({});
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchField, setSearchField] = useState<"all" | "sender" | "subject" | "body">("all");
+  const [searchResults, setSearchResults] = useState<InboxEmail[]>([]);
+  const [searching, setSearching] = useState(false);
   const [swipeRemovedIds, setSwipeRemovedIds] = useState<string[]>([]);
   const [swipeHapticsEnabled, setSwipeHapticsEnabled] = useState<boolean>(() => {
     if (typeof window === "undefined") {
@@ -624,6 +629,34 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
     }
   }
 
+  async function performSearch() {
+    if (!searchQuery.trim()) {
+      setSearchMode(false);
+      setSearchResults([]);
+      return;
+    }
+    setSearching(true);
+    setActionError("");
+    try {
+      const response = await getJSON<{ results: InboxEmail[] }>(
+        `/api/mail/search?q=${encodeURIComponent(searchQuery)}&field=${encodeURIComponent(searchField)}&mailbox=${encodeURIComponent(mailbox || "INBOX")}&limit=100`
+      );
+      setSearchResults(response.results ?? []);
+      setSearchMode(true);
+    } catch (e) {
+      const message = toErrorMessage(e, "search failed");
+      setActionError(message);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function clearSearch() {
+    setSearchMode(false);
+    setSearchQuery("");
+    setSearchResults([]);
+  }
+
   function updateSwipeState(messageId: string, offset: number, width: number, ratioOverride?: number) {
     const tone: SwipeTone = offset < 0 ? "archive" : "delete";
     const ratio = ratioOverride ?? Math.abs(offset) / Math.max(width, 1);
@@ -960,7 +993,128 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
       {error ? <p className="notice notice-error">Failed to load inbox: {error}</p> : null}
       {actionError ? <p className="notice notice-error">Inbox action failed: {actionError}</p> : null}
 
-      {isInboxMailbox ? (
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 14, marginBottom: 14 }}>
+        <div style={{ flex: 1, minWidth: 200, display: "flex", gap: 4, alignItems: "center" }}>
+          <input
+            type="text"
+            placeholder="Search..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                void performSearch();
+              }
+            }}
+            style={{
+              flex: 1,
+              padding: "6px 8px",
+              borderRadius: "4px",
+              border: "1px solid var(--border-color)",
+              backgroundColor: "var(--bg-color)",
+              fontSize: "0.9rem"
+            }}
+          />
+          <select
+            value={searchField}
+            onChange={(e) => setSearchField(e.target.value as any)}
+            style={{
+              padding: "6px 8px",
+              borderRadius: "4px",
+              border: "1px solid var(--border-color)",
+              backgroundColor: "var(--bg-color)",
+              fontSize: "0.9rem"
+            }}
+          >
+            <option value="all">All</option>
+            <option value="sender">Sender</option>
+            <option value="subject">Subject</option>
+            <option value="body">Body</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => void performSearch()}
+            disabled={searching}
+            style={{ padding: "6px 12px" }}
+          >
+            {searching ? "Searching..." : "Search"}
+          </button>
+          {searchMode ? (
+            <button type="button" onClick={clearSearch} style={{ padding: "6px 12px" }}>
+              Clear
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {searchMode ? (
+        <div className="inbox-list-region">
+          <div style={{ marginBottom: 8 }}>
+            <p style={{ fontSize: "0.9rem", color: "var(--ink-weaker)" }}>
+              Found {searchResults.length} result{searchResults.length === 1 ? "" : "s"}
+            </p>
+          </div>
+          {searchResults.length === 0 ? (
+            <div className="inbox-empty-state">
+              <p>No emails match your search.</p>
+            </div>
+          ) : (
+            <div className="inbox-table-wrap">
+              <div className="inbox-table-scroll">
+                <table className="inbox-table">
+                  <thead>
+                    <tr>
+                      <th className="inbox-col-heading">Subject</th>
+                      <th className="inbox-col-heading inbox-desktop-col">Sender</th>
+                      <th className="inbox-col-heading inbox-col-time inbox-desktop-col">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {searchResults.map((item) => {
+                      const isRead = item.status === "read";
+                      const displayTime = formatInboxListTime(item.atUtc);
+                      return (
+                        <tr
+                          key={item.messageId}
+                          className={`inbox-row ${isRead ? "" : "inbox-row-unread"}`.trim()}
+                          onClick={() => setSelected(item)}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <td className="inbox-cell">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelected(item);
+                              }}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                textAlign: "left",
+                                padding: 0,
+                                fontSize: "0.95rem",
+                                fontWeight: isRead ? "normal" : "600"
+                              }}
+                            >
+                              {item.subject || "(no subject)"}
+                            </button>
+                          </td>
+                          <td className="inbox-cell inbox-desktop-col" style={{ fontSize: "0.9rem", color: "var(--ink-weaker)" }}>
+                            {item.sender}
+                          </td>
+                          <td className="inbox-cell inbox-col-time inbox-desktop-col" style={{ fontSize: "0.85rem", color: "var(--ink-weaker)" }}>
+                            {displayTime}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : isInboxMailbox ? (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14, marginBottom: 14 }}>
           {tabs.map((tab) => {
             const unreadCount = (byTab[tab] ?? []).filter((item) => item.status !== "read").length;
