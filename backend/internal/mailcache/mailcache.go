@@ -55,6 +55,13 @@ type Entry struct {
 	// it, since overviews deliberately skip body content. Empty means "not
 	// warmed yet, fetch live if needed," never "empty message."
 	Body string `json:"body,omitempty"`
+
+	// HasAttachments follows the same warm-path-only rule as Body: the poller
+	// sets it from the full GetEmails parse it already performs, while the
+	// overview-sync path leaves it false (overviews carry no attachment
+	// info). False therefore means "no attachments, or not warmed yet" — a
+	// client that needs certainty calls GET /api/mail/attachments.
+	HasAttachments bool `json:"hasAttachments,omitempty"`
 }
 
 // Overview is the caller-supplied live snapshot for one message, sourced

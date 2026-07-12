@@ -1510,12 +1510,12 @@ func (s *Server) handleDesktopPair(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                true,
-		"pairingCode":       pairingCode,
-		"ttlSeconds":        300,
-		"rateLimit":         remaining,
-		"serverBaseUrl":     serverBaseURL,
-		"registerEndpoint":  registerEndpoint,
+		"ok":               true,
+		"pairingCode":      pairingCode,
+		"ttlSeconds":       300,
+		"rateLimit":        remaining,
+		"serverBaseUrl":    serverBaseURL,
+		"registerEndpoint": registerEndpoint,
 	})
 }
 
@@ -1641,6 +1641,9 @@ type inboxEmail struct {
 	Status    string `json:"status"`
 	Detail    string `json:"detail,omitempty"`
 	AtUTC     string `json:"atUtc"`
+	// HasAttachments is a warm-path hint for the inbox paperclip badge; see
+	// mailcache.Entry.HasAttachments. Absent when false.
+	HasAttachments bool `json:"hasAttachments,omitempty"`
 	// ChangeType is only ever set on a delta (since=) response: "new" (Body
 	// populated, client should insert) or "updated" (flags/label changed,
 	// Body intentionally empty — the client already has it cached). Absent
@@ -1780,17 +1783,18 @@ func mailCacheEntryFromOverview(ov imapadapter.Overview) mailcache.Overview {
 func mailCacheEntryFromUnreadMessage(msg imapadapter.UnreadMessage, status string) mailcache.Entry {
 	uid, _ := strconv.Atoi(strings.TrimSpace(msg.MessageID))
 	return mailcache.Entry{
-		UID:       uid,
-		MessageID: msg.MessageID,
-		Subject:   msg.Subject,
-		Sender:    msg.Sender,
-		SentTo:    msg.SentTo,
-		CC:        msg.CC,
-		BCC:       msg.BCC,
-		Keywords:  msg.Keywords,
-		Status:    status,
-		AtUTC:     msg.AtUTC,
-		Body:      msg.Body,
+		UID:            uid,
+		MessageID:      msg.MessageID,
+		Subject:        msg.Subject,
+		Sender:         msg.Sender,
+		SentTo:         msg.SentTo,
+		CC:             msg.CC,
+		BCC:            msg.BCC,
+		Keywords:       msg.Keywords,
+		Status:         status,
+		AtUTC:          msg.AtUTC,
+		Body:           msg.Body,
+		HasAttachments: msg.HasAttachments,
 	}
 }
 
@@ -1895,15 +1899,16 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, mailClie
 		if entries, warmed := cache.Snapshot(cacheKey, limit); warmed {
 			for _, e := range entries {
 				bucket(e.Keywords, inboxEmail{
-					MessageID: e.MessageID,
-					Sender:    e.Sender,
-					SentTo:    e.SentTo,
-					CC:        e.CC,
-					BCC:       e.BCC,
-					Subject:   e.Subject,
-					Body:      e.Body,
-					Status:    e.Status,
-					AtUTC:     e.AtUTC,
+					MessageID:      e.MessageID,
+					Sender:         e.Sender,
+					SentTo:         e.SentTo,
+					CC:             e.CC,
+					BCC:            e.BCC,
+					Subject:        e.Subject,
+					Body:           e.Body,
+					Status:         e.Status,
+					AtUTC:          e.AtUTC,
+					HasAttachments: e.HasAttachments,
 				})
 			}
 			tabs = append(tabs, inboxUncategorizedTab)
@@ -1928,15 +1933,16 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, mailClie
 				status = "unread"
 			}
 			bucket(msg.Keywords, inboxEmail{
-				MessageID: msg.MessageID,
-				Sender:    msg.Sender,
-				SentTo:    msg.SentTo,
-				CC:        msg.CC,
-				BCC:       msg.BCC,
-				Subject:   msg.Subject,
-				Body:      msg.Body,
-				Status:    status,
-				AtUTC:     msg.AtUTC,
+				MessageID:      msg.MessageID,
+				Sender:         msg.Sender,
+				SentTo:         msg.SentTo,
+				CC:             msg.CC,
+				BCC:            msg.BCC,
+				Subject:        msg.Subject,
+				Body:           msg.Body,
+				Status:         status,
+				AtUTC:          msg.AtUTC,
+				HasAttachments: msg.HasAttachments,
 			})
 			warmEntries = append(warmEntries, mailCacheEntryFromUnreadMessage(msg, status))
 		}
@@ -1976,21 +1982,22 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, mailClie
 			needBodies = append(needBodies, e.UID)
 		}
 	}
-	bodies := map[int]string{}
+	contents := map[int]imapadapter.MessageContent{}
 	if len(needBodies) > 0 {
-		bodies, err = mailClient.GetMessageBodies(ctx, mailbox, needBodies)
+		contents, err = mailClient.GetMessageBodies(ctx, mailbox, needBodies)
 		if err != nil {
 			http.Error(w, "failed to fetch inbox", http.StatusBadGateway)
 			return
 		}
 		// Attach the freshly fetched bodies back onto the cache (metadata
 		// is unchanged from what Sync just stored, so this only warms
-		// Body without bumping Rev) so a subsequent classic-path load
-		// doesn't re-fetch them live.
+		// Body/HasAttachments without bumping Rev) so a subsequent
+		// classic-path load doesn't re-fetch them live.
 		warmEntries := make([]mailcache.Entry, 0, len(needBodies))
 		for i, e := range result.New {
-			if body := bodies[e.UID]; body != "" {
-				e.Body = body
+			if c, ok := contents[e.UID]; ok && c.Body != "" {
+				e.Body = c.Body
+				e.HasAttachments = c.HasAttachments
 				result.New[i] = e
 				warmEntries = append(warmEntries, e)
 			}
@@ -2004,33 +2011,39 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, mailClie
 
 	for _, e := range result.New {
 		body := e.Body
+		hasAttachments := e.HasAttachments
 		if body == "" {
-			body = bodies[e.UID]
+			if c, ok := contents[e.UID]; ok {
+				body = c.Body
+				hasAttachments = c.HasAttachments
+			}
 		}
 		bucket(e.Keywords, inboxEmail{
-			MessageID:  e.MessageID,
-			Sender:     e.Sender,
-			SentTo:     e.SentTo,
-			CC:         e.CC,
-			BCC:        e.BCC,
-			Subject:    e.Subject,
-			Body:       body,
-			Status:     e.Status,
-			AtUTC:      e.AtUTC,
-			ChangeType: "new",
+			MessageID:      e.MessageID,
+			Sender:         e.Sender,
+			SentTo:         e.SentTo,
+			CC:             e.CC,
+			BCC:            e.BCC,
+			Subject:        e.Subject,
+			Body:           body,
+			Status:         e.Status,
+			AtUTC:          e.AtUTC,
+			HasAttachments: hasAttachments,
+			ChangeType:     "new",
 		})
 	}
 	for _, e := range result.Updated {
 		bucket(e.Keywords, inboxEmail{
-			MessageID:  e.MessageID,
-			Sender:     e.Sender,
-			SentTo:     e.SentTo,
-			CC:         e.CC,
-			BCC:        e.BCC,
-			Subject:    e.Subject,
-			Status:     e.Status,
-			AtUTC:      e.AtUTC,
-			ChangeType: "updated",
+			MessageID:      e.MessageID,
+			Sender:         e.Sender,
+			SentTo:         e.SentTo,
+			CC:             e.CC,
+			BCC:            e.BCC,
+			Subject:        e.Subject,
+			Status:         e.Status,
+			AtUTC:          e.AtUTC,
+			HasAttachments: e.HasAttachments,
+			ChangeType:     "updated",
 		})
 	}
 

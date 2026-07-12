@@ -198,6 +198,10 @@ func (s *Store) Sync(mailboxKey string, limit int, live []Overview, since int64)
 			e.Rev = win.Seq
 			e.FirstRev = prev.FirstRev
 			e.Body = prev.Body
+			// Overviews carry no attachment info, so preserve the warmed
+			// flag across a metadata-only change (same rule as Body) — else
+			// the paperclip badge would flicker off on every flag change.
+			e.HasAttachments = prev.HasAttachments
 			next = append(next, e)
 		default:
 			next = append(next, prev)
@@ -290,6 +294,10 @@ func (s *Store) Upsert(mailboxKey string, entries []Entry) error {
 		if in.Body != "" {
 			updated.Body = in.Body
 		}
+		// Only the warm path (poller) calls Upsert, and it always carries an
+		// authoritative attachment flag from the same GetEmails parse — so
+		// adopt it unconditionally, unlike Body which uses "" as its sentinel.
+		updated.HasAttachments = in.HasAttachments
 		if changed {
 			win.Seq++
 			updated.Rev = win.Seq

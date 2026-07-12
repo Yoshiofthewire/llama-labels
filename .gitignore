@@ -47,3 +47,6 @@ share/ollama/models/
 # Claude Code / superpowers session artifacts
 .superpowers/
 docs/superpowers/
+
+# Playwright MCP verification artifacts
+.playwright-mcp/

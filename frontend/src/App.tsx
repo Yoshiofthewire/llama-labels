@@ -86,6 +86,45 @@ type DraftComposePayload = {
   body?: string;
 };
 
+// ComposeAttachment mirrors the backend's attachment wire shape
+// ({name, mimeType, dataBase64}) accepted by /api/mail/send and /api/mail/draft.
+// size is kept client-side only, for the chip label and the 25 MB total cap.
+type ComposeAttachment = {
+  name: string;
+  mimeType: string;
+  dataBase64: string;
+  size: number;
+};
+
+// Mirror of the backend maxMailAttachmentBytes (25 MB total decoded).
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+// readFileAsAttachment reads a File and strips the "data:...;base64," prefix
+// that FileReader.readAsDataURL prepends, yielding the raw base64 the API wants.
+function readFileAsAttachment(file: File): Promise<ComposeAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`failed to read ${file.name}`));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const comma = result.indexOf(",");
+      resolve({
+        name: file.name,
+        mimeType: file.type || "application/octet-stream",
+        dataBase64: comma >= 0 ? result.slice(comma + 1) : result,
+        size: file.size
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function App() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -117,9 +156,11 @@ export function App() {
   const [composeSavingDraft, setComposeSavingDraft] = useState(false);
   const [composeError, setComposeError] = useState("");
   const [composeSuccess, setComposeSuccess] = useState("");
+  const [composeAttachments, setComposeAttachments] = useState<ComposeAttachment[]>([]);
   const quillEditorRef = useRef<HTMLDivElement | null>(null);
   const quillInstanceRef = useRef<Quill | null>(null);
   const composeDialogRef = useRef<HTMLDialogElement | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const [licenseOpen, setLicenseOpen] = useState(false);
   const licenseDialogRef = useRef<HTMLDialogElement | null>(null);
   const currentMailbox = new URLSearchParams(location.search).get("mailbox")?.trim() ?? "";
@@ -421,9 +462,38 @@ export function App() {
     setComposeSending(false);
     setComposeError("");
     setComposeSuccess("");
+    setComposeAttachments([]);
+    if (attachmentInputRef.current) {
+      attachmentInputRef.current.value = "";
+    }
     if (quillInstanceRef.current) {
       quillInstanceRef.current.setText("");
     }
+  }
+
+  async function handleAttachmentPick(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = ""; // allow re-picking the same file
+    if (files.length === 0) return;
+    setComposeError("");
+    try {
+      const picked = await Promise.all(files.map(readFileAsAttachment));
+      setComposeAttachments((current) => {
+        const next = [...current, ...picked];
+        const total = next.reduce((sum, a) => sum + a.size, 0);
+        if (total > MAX_ATTACHMENT_BYTES) {
+          setComposeError(`Attachments too large (max ${formatBytes(MAX_ATTACHMENT_BYTES)} total).`);
+          return current;
+        }
+        return next;
+      });
+    } catch (e) {
+      setComposeError(toErrorMessage(e, "failed to read attachment"));
+    }
+  }
+
+  function removeComposeAttachment(index: number) {
+    setComposeAttachments((current) => current.filter((_, i) => i !== index));
   }
 
   function openComposeWindow() {
@@ -487,7 +557,8 @@ export function App() {
         bcc: composeBcc.trim(),
         subject: composeSubject,
         body,
-        mode: "html"
+        mode: "html",
+        attachments: composeAttachments.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 }))
       });
       setComposeOpen(false);
       resetComposeForm();
@@ -516,7 +587,8 @@ export function App() {
         bcc: composeBcc.trim(),
         subject: composeSubject,
         body,
-        mode: "html"
+        mode: "html",
+        attachments: composeAttachments.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 }))
       });
       setComposeSuccess("Draft saved.");
     } catch (e) {
@@ -852,7 +924,15 @@ export function App() {
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <button type="button" className="compose-send" onClick={() => void sendComposeEmail()} disabled={composeSending || composeSavingDraft}>{composeSending ? "Sending..." : "Send"}</button>
                 <button type="button" className="compose-save-draft" onClick={() => void saveComposeDraft()} disabled={composeSending || composeSavingDraft}>Save Draft</button>
+                <button type="button" className="compose-attach" onClick={() => attachmentInputRef.current?.click()} disabled={composeSending || composeSavingDraft}>📎 Attach</button>
                 <button type="button" className="compose-trash" onClick={trashComposeDraft} disabled={composeSending || composeSavingDraft}>Trash</button>
+                <input
+                  ref={attachmentInputRef}
+                  type="file"
+                  multiple
+                  style={{ display: "none" }}
+                  onChange={(event) => void handleAttachmentPick(event)}
+                />
               </div>
               <button type="button" className="compose-close" onClick={closeComposeWindow} disabled={composeSending || composeSavingDraft}>Close</button>
             </div>
@@ -878,6 +958,26 @@ export function App() {
                 <input type="text" value={composeSubject} onChange={(event) => setComposeSubject(event.target.value)} placeholder="Subject" disabled={composeSending || composeSavingDraft} />
               </label>
             </div>
+
+            {composeAttachments.length > 0 ? (
+              <div className="compose-attachments">
+                {composeAttachments.map((attachment, index) => (
+                  <span key={`${attachment.name}-${index}`} className="compose-attachment-chip">
+                    <span className="compose-attachment-name">{attachment.name}</span>
+                    <span className="compose-attachment-size">({formatBytes(attachment.size)})</span>
+                    <button
+                      type="button"
+                      className="compose-attachment-remove"
+                      aria-label={`Remove ${attachment.name}`}
+                      onClick={() => removeComposeAttachment(index)}
+                      disabled={composeSending || composeSavingDraft}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
 
             <div
               ref={quillEditorRef}

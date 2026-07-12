@@ -346,17 +346,18 @@ func mailCacheEntriesFromMessages(messages []imapadapter.Message) []mailcache.En
 			continue
 		}
 		entries = append(entries, mailcache.Entry{
-			UID:       uid,
-			MessageID: msg.ID,
-			Subject:   msg.Subject,
-			Sender:    msg.Sender,
-			SentTo:    msg.SentTo,
-			CC:        msg.CC,
-			BCC:       msg.BCC,
-			Keywords:  msg.Keywords,
-			Status:    "unread",
-			AtUTC:     msg.AtUTC,
-			Body:      msg.Body,
+			UID:            uid,
+			MessageID:      msg.ID,
+			Subject:        msg.Subject,
+			Sender:         msg.Sender,
+			SentTo:         msg.SentTo,
+			CC:             msg.CC,
+			BCC:            msg.BCC,
+			Keywords:       msg.Keywords,
+			Status:         "unread",
+			AtUTC:          msg.AtUTC,
+			Body:           msg.Body,
+			HasAttachments: msg.HasAttachments,
 		})
 	}
 	return entries

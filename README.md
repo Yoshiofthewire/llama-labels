@@ -245,8 +245,10 @@ IMAP and inbox:
 
 Mail:
 
-- `POST /api/mail/send`
-- `POST /api/mail/draft`
+- `POST /api/mail/send` (optional `attachments: [{name, mimeType, dataBase64}]`, 25 MB total)
+- `POST /api/mail/draft` (same optional `attachments` shape)
+- `GET /api/mail/attachments?mailbox=&messageId=` (list a message's attachment metadata)
+- `GET /api/mail/attachment?mailbox=&messageId=&index=` (download one attachment)
 
 Notifications (all scoped to the signed-in user):
 

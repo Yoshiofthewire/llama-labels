@@ -216,6 +216,50 @@ func TestUpsert_BodyAttachedWithoutBumpingRev(t *testing.T) {
 	}
 }
 
+func TestHasAttachments_WarmPathSetsIt_OverviewLeavesUnset(t *testing.T) {
+	s := newTestStore(t)
+
+	// Overview sync (the cheap path) carries no attachment info, so the flag
+	// stays false regardless of the real message.
+	s.Sync("INBOX", 10, []Overview{ov(1, "a", "unread")}, 0)
+	entries, _ := s.Snapshot("INBOX", 1)
+	if entries[0].HasAttachments {
+		t.Fatalf("overview-sync path must leave HasAttachments false, got %+v", entries[0])
+	}
+
+	// Warm path (poller Upsert) carries an authoritative flag from the full
+	// GetEmails parse — adopt it.
+	warm := entry(1, "a", "unread", "warmed-body")
+	warm.HasAttachments = true
+	if err := s.Upsert("INBOX", []Entry{warm}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	entries, _ = s.Snapshot("INBOX", 1)
+	if !entries[0].HasAttachments {
+		t.Fatalf("warm path must set HasAttachments, got %+v", entries[0])
+	}
+
+	// A metadata-only overview change (e.g. read flag) must preserve the
+	// warmed flag, not reset it from the attachment-less overview.
+	s.Sync("INBOX", 10, []Overview{ov(1, "a", "read")}, 0)
+	entries, _ = s.Snapshot("INBOX", 1)
+	if !entries[0].HasAttachments {
+		t.Fatalf("overview-sync metadata change must preserve HasAttachments, got %+v", entries[0])
+	}
+
+	// A later warm with no attachments must clear it back (unconditional
+	// adoption, unlike Body's empty-string sentinel).
+	warm.Status = "read"
+	warm.HasAttachments = false
+	if err := s.Upsert("INBOX", []Entry{warm}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	entries, _ = s.Snapshot("INBOX", 1)
+	if entries[0].HasAttachments {
+		t.Fatalf("warm path must clear HasAttachments when the message has none, got %+v", entries[0])
+	}
+}
+
 func TestUpsert_WindowCapTrimsOldestUIDs(t *testing.T) {
 	s := newTestStore(t)
 	entries := make([]Entry, 0, maxWindowEntries+5)

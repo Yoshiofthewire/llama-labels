@@ -25,10 +25,11 @@ type fakeMailClient struct {
 	overviewsErr  error
 	overviewCalls int
 
-	bodies       map[int]string
-	bodiesErr    error
-	bodiesCalls  int
-	lastBodyUIDs []int
+	bodies             map[int]string
+	bodyHasAttachments map[int]bool
+	bodiesErr          error
+	bodiesCalls        int
+	lastBodyUIDs       []int
 
 	attachments    map[int][]mailmsg.Attachment
 	attachmentsErr error
@@ -48,16 +49,16 @@ func (f *fakeMailClient) ListOverviews(_ context.Context, _ string, _ int) ([]im
 	return f.overviews, f.overviewsErr
 }
 
-func (f *fakeMailClient) GetMessageBodies(_ context.Context, _ string, uids []int) (map[int]string, error) {
+func (f *fakeMailClient) GetMessageBodies(_ context.Context, _ string, uids []int) (map[int]imapadapter.MessageContent, error) {
 	f.bodiesCalls++
 	f.lastBodyUIDs = append([]int{}, uids...)
 	if f.bodiesErr != nil {
 		return nil, f.bodiesErr
 	}
-	out := map[int]string{}
+	out := map[int]imapadapter.MessageContent{}
 	for _, uid := range uids {
 		if b, ok := f.bodies[uid]; ok {
-			out[uid] = b
+			out[uid] = imapadapter.MessageContent{Body: b, HasAttachments: f.bodyHasAttachments[uid]}
 		}
 	}
 	return out, nil

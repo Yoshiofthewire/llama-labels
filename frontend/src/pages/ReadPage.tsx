@@ -16,6 +16,15 @@ type InboxEmail = {
   status: string;
   detail?: string;
   atUtc: string;
+  hasAttachments?: boolean;
+};
+
+// AttachmentInfo mirrors the /api/mail/attachments wire shape.
+type AttachmentInfo = {
+  index: number;
+  name: string;
+  mimeType: string;
+  size: number;
 };
 
 type ReadPageProps = {
@@ -53,6 +62,12 @@ type SwipeRowState = {
   showHint: boolean;
   armed: boolean;
 };
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function formatTimestamp(value: string): string {
   if (!value) return "-";
@@ -236,6 +251,9 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
   const [byTab, setByTab] = useState<Record<string, InboxEmail[]>>({});
   const [activeTab, setActiveTab] = useState<string>("");
   const [selected, setSelected] = useState<InboxEmail | null>(null);
+  const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [attachmentsError, setAttachmentsError] = useState("");
   const emailReaderDialogRef = useRef<HTMLDialogElement | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [showImages, setShowImages] = useState(false);
@@ -799,8 +817,33 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
     setShowImages(false);
     setShowRawEmail(false);
     setActionError("");
+    setAttachments([]);
+    setAttachmentsError("");
+    if (item.hasAttachments) {
+      void loadAttachments(item);
+    }
     if (item.status !== "read") {
       await applyInboxAction("read", [item.messageId]);
+    }
+  }
+
+  function attachmentQuery(item: InboxEmail): string {
+    const mailboxParam = mailbox ? `&mailbox=${encodeURIComponent(mailbox)}` : "";
+    return `messageId=${encodeURIComponent(item.messageId)}${mailboxParam}`;
+  }
+
+  async function loadAttachments(item: InboxEmail) {
+    setAttachmentsLoading(true);
+    setAttachmentsError("");
+    try {
+      const data = await getJSON<{ ok: boolean; attachments: AttachmentInfo[] }>(
+        `/api/mail/attachments?${attachmentQuery(item)}`
+      );
+      setAttachments(data.attachments ?? []);
+    } catch (e) {
+      setAttachmentsError(toErrorMessage(e, "failed to load attachments"));
+    } finally {
+      setAttachmentsLoading(false);
     }
   }
 
@@ -1088,6 +1131,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
                           }}
                           className={`inbox-subject-button ${isRead ? "" : "inbox-subject-unread"}`}
                         >
+                          {item.hasAttachments ? <span className="inbox-attachment-icon" title="Has attachments" aria-label="Has attachments">📎 </span> : null}
                           {item.subject || "(no subject)"}
                         </button>
                         <div className="inbox-row-meta">
@@ -1189,6 +1233,28 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
               <p style={{ margin: 0 }}><strong>Status:</strong> {selected.status || "-"}</p>
               <p style={{ margin: 0 }}><strong>Time:</strong> {formatTimestamp(selected.atUtc)}</p>
               {selected.detail ? <p style={{ margin: 0 }}><strong>Detail:</strong> {selected.detail}</p> : null}
+              {selected.hasAttachments ? (
+                <div className="email-attachments">
+                  <strong>Attachments:</strong>
+                  {attachmentsLoading ? <span className="email-attachments-status"> loading…</span> : null}
+                  {attachmentsError ? <span className="email-attachments-status email-attachments-error"> {attachmentsError}</span> : null}
+                  {!attachmentsLoading && !attachmentsError && attachments.length === 0 ? (
+                    <span className="email-attachments-status"> none</span>
+                  ) : null}
+                  <div className="email-attachment-list">
+                    {attachments.map((attachment) => (
+                      <a
+                        key={attachment.index}
+                        className="email-attachment-link"
+                        href={`/api/mail/attachment?${attachmentQuery(selected)}&index=${attachment.index}`}
+                        download={attachment.name}
+                      >
+                        📎 {attachment.name} <span className="email-attachment-size">({formatBytes(attachment.size)})</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div>
                 {showRawEmail ? (
                   <pre

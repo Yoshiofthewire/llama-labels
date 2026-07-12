@@ -28,6 +28,10 @@ type Message struct {
 	Keywords []string
 	AtUTC    string
 	Body     string
+	// HasAttachments is set from the same GetEmails parse that fills Body, so
+	// the poller's cache-warm path can carry it into mailcache.Entry without
+	// any extra IMAP round trip.
+	HasAttachments bool
 }
 
 type UnreadMessage struct {
@@ -41,6 +45,15 @@ type UnreadMessage struct {
 	AtUTC     string
 	Body      string
 	Status    string
+	// HasAttachments comes from the same GetEmails parse as Body.
+	HasAttachments bool
+}
+
+// MessageContent is the per-UID result of GetMessageBodies: the rendered body
+// plus whether the message carries attachments, both from one GetEmails parse.
+type MessageContent struct {
+	Body           string
+	HasAttachments bool
 }
 
 // Overview is UID + envelope + flags for one message, without body content
@@ -91,9 +104,10 @@ type Client interface {
 	// in mailbox, without a body fetch — the selective, cheap counterpart
 	// to ListUnreadMessages used by the mail cache's live-diff path.
 	ListOverviews(ctx context.Context, mailbox string, limit int) ([]Overview, error)
-	// GetMessageBodies fetches body content for exactly the given UIDs —
-	// called only for UIDs the mail cache reports as genuinely new.
-	GetMessageBodies(ctx context.Context, mailbox string, uids []int) (map[int]string, error)
+	// GetMessageBodies fetches body content and attachment presence for
+	// exactly the given UIDs — called only for UIDs the mail cache reports as
+	// genuinely new.
+	GetMessageBodies(ctx context.Context, mailbox string, uids []int) (map[int]MessageContent, error)
 	ListLabels(ctx context.Context) ([]string, error)
 	ListSubfolders(ctx context.Context, parent string) ([]string, error)
 	CreateFolder(ctx context.Context, parent, name string) (string, error)
@@ -346,15 +360,16 @@ func (c *APIClient) ListUnreadInbox(ctx context.Context, sinceCheckpoint string)
 		}
 		ov := overviewFromEmail(uid, e)
 		out = append(out, Message{
-			ID:       ov.MessageID,
-			Subject:  ov.Subject,
-			Sender:   ov.Sender,
-			SentTo:   ov.SentTo,
-			CC:       ov.CC,
-			BCC:      ov.BCC,
-			Keywords: ov.Keywords,
-			AtUTC:    ov.AtUTC,
-			Body:     body,
+			ID:             ov.MessageID,
+			Subject:        ov.Subject,
+			Sender:         ov.Sender,
+			SentTo:         ov.SentTo,
+			CC:             ov.CC,
+			BCC:            ov.BCC,
+			Keywords:       ov.Keywords,
+			AtUTC:          ov.AtUTC,
+			Body:           body,
+			HasAttachments: len(e.Attachments) > 0,
 		})
 		if uid > maxUID {
 			maxUID = uid
@@ -430,16 +445,17 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, mailbox string, limi
 		}
 
 		out = append(out, UnreadMessage{
-			MessageID: ov.MessageID,
-			Subject:   ov.Subject,
-			Sender:    ov.Sender,
-			SentTo:    ov.SentTo,
-			CC:        ov.CC,
-			BCC:       ov.BCC,
-			Keywords:  ov.Keywords,
-			AtUTC:     ov.AtUTC,
-			Body:      body,
-			Status:    ov.Status,
+			MessageID:      ov.MessageID,
+			Subject:        ov.Subject,
+			Sender:         ov.Sender,
+			SentTo:         ov.SentTo,
+			CC:             ov.CC,
+			BCC:            ov.BCC,
+			Keywords:       ov.Keywords,
+			AtUTC:          ov.AtUTC,
+			Body:           body,
+			Status:         ov.Status,
+			HasAttachments: len(e.Attachments) > 0,
 		})
 	}
 
@@ -503,9 +519,10 @@ func (c *APIClient) ListOverviews(ctx context.Context, mailbox string, limit int
 }
 
 // GetMessageBodies fetches full body content (HTML preferred, falling back
-// to plain text) for exactly the given UIDs — the selective counterpart to
-// ListOverviews, called only for UIDs the mail cache reports as new.
-func (c *APIClient) GetMessageBodies(ctx context.Context, mailbox string, uids []int) (map[int]string, error) {
+// to plain text) and attachment presence for exactly the given UIDs — the
+// selective counterpart to ListOverviews, called only for UIDs the mail cache
+// reports as new.
+func (c *APIClient) GetMessageBodies(ctx context.Context, mailbox string, uids []int) (map[int]MessageContent, error) {
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
 
@@ -513,7 +530,7 @@ func (c *APIClient) GetMessageBodies(ctx context.Context, mailbox string, uids [
 		return nil, err
 	}
 	if len(uids) == 0 {
-		return map[int]string{}, nil
+		return map[int]MessageContent{}, nil
 	}
 	mailbox = strings.TrimSpace(mailbox)
 
@@ -532,7 +549,7 @@ func (c *APIClient) GetMessageBodies(ctx context.Context, mailbox string, uids [
 		return nil, fmt.Errorf("imap fetch emails: %w", err)
 	}
 
-	out := make(map[int]string, len(uids))
+	out := make(map[int]MessageContent, len(uids))
 	for _, uid := range uids {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -545,7 +562,7 @@ func (c *APIClient) GetMessageBodies(ctx context.Context, mailbox string, uids [
 		if body == "" {
 			body = strings.TrimSpace(e.Text)
 		}
-		out[uid] = body
+		out[uid] = MessageContent{Body: body, HasAttachments: len(e.Attachments) > 0}
 	}
 	return out, nil
 }
