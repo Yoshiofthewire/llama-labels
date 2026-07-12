@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { toErrorMessage } from "../api/client";
 import {
   createContact,
+  dedupeContacts,
   deleteContact,
   listContacts,
   updateContact,
@@ -102,6 +103,7 @@ export function ContactsPage() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
   const [busyId, setBusyId] = useState("");
+  const [deduping, setDeduping] = useState(false);
 
   const [form, setForm] = useState<FormState>(emptyFormState);
   const [editingUid, setEditingUid] = useState("");
@@ -219,6 +221,27 @@ export function ContactsPage() {
     }
   }
 
+  async function mergeDuplicates() {
+    if (!window.confirm("Scan for duplicate contacts and merge them? This can't be undone.")) {
+      return;
+    }
+    setDeduping(true);
+    setStatus("");
+    try {
+      const report = await dedupeContacts();
+      if (report.mergedCount === 0) {
+        setStatus("No duplicate contacts found.");
+      } else {
+        setStatus(`Merged ${report.mergedCount} duplicate contact${report.mergedCount === 1 ? "" : "s"}.`);
+        await refresh();
+      }
+    } catch (error: unknown) {
+      setStatus(`Failed to merge duplicates: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setDeduping(false);
+    }
+  }
+
   async function removeContact(contact: Contact) {
     if (!window.confirm(`Delete ${contact.fn}?`)) {
       return;
@@ -255,6 +278,16 @@ export function ContactsPage() {
                 <strong>{contacts.length}</strong> contact{contacts.length === 1 ? "" : "s"}
               </span>
             </div>
+          ) : null}
+          {!loading && contacts.length > 1 ? (
+            <button
+              type="button"
+              className="contacts-action"
+              onClick={() => void mergeDuplicates()}
+              disabled={deduping}
+            >
+              {deduping ? "Merging..." : "Merge Duplicates"}
+            </button>
           ) : null}
           <button type="button" onClick={openCreateForm}>
             New Contact
