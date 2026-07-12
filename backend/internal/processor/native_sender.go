@@ -187,9 +187,11 @@ func NewNativePushDispatcher(log *logging.Logger) *NativePushDispatcher {
 	}
 }
 
-// senderFor returns the appropriate sender for a given platform.
+// senderFor returns the appropriate sender for a given platform. Apple
+// platforms (iOS and macOS) share the APNs relay; everything else goes to FCM.
 func (d *NativePushDispatcher) senderFor(platform string) *RelaySender {
-	if strings.EqualFold(strings.TrimSpace(platform), "ios") {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "ios", "macos":
 		return d.apnsSender
 	}
 	return d.fcmSender

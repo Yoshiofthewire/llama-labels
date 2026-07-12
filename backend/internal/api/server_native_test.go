@@ -192,6 +192,26 @@ func TestNativeRegisterStoresDevice(t *testing.T) {
 	}
 }
 
+// macOS registrations must keep their platform (they route to APNs); only
+// genuinely unknown platforms fall back to android.
+func TestNormalizeNativePlatform(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"ios", "ios"},
+		{"macos", "macos"},
+		{" MacOS ", "macos"},
+		{"android", "android"},
+		{"", "android"},
+		{"windows", "android"},
+	}
+	for _, c := range cases {
+		if got := normalizeNativePlatform(c.in); got != c.want {
+			t.Errorf("normalizeNativePlatform(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestNativeRegisterRejectsInvalidPairingToken(t *testing.T) {
 	srv := newTestServer(t)
 
