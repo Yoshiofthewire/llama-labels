@@ -34,6 +34,8 @@ export type Contact = {
   addresses?: ContactAddress[];
   notes?: string;
   birthday?: string;
+  mergedUIDs?: string[];
+  mergedInto?: string;
 };
 
 export type ContactInput = {
@@ -72,6 +74,20 @@ export function updateContact(uid: string, input: ContactInput): Promise<Contact
 
 export function deleteContact(uid: string): Promise<{ ok: boolean; removed: boolean }> {
   return deleteJSON<{ ok: boolean; removed: boolean }>(`/api/contacts/${encodeURIComponent(uid)}`);
+}
+
+export type DedupeMerge = {
+  survivor: string;
+  absorbed: string[];
+};
+
+export type DedupeReport = {
+  mergedCount: number;
+  groups: DedupeMerge[];
+};
+
+export function dedupeContacts(): Promise<DedupeReport> {
+  return postJSON<DedupeReport>("/api/contacts/dedupe", {});
 }
 
 export type DAVPasswordStatus = {
