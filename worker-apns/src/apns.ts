@@ -152,6 +152,7 @@ export async function sendApnsMessage(
   const url = `https://${host}/3/device/${token}`;
 
   // Build the APS payload (matching FCM's structure for consistency)
+  const data = message.data ?? {};
   const payload = {
     aps: {
       alert: {
@@ -160,9 +161,12 @@ export async function sendApnsMessage(
       },
       sound: "default",
       "mutable-content": 1,
+      // The category binds the client's registered notification actions
+      // (Approve/Deny for MFA challenges); without it the buttons never show.
+      category: data.type === "mfa_challenge" ? "MFA_CHALLENGE" : "MAIL_NOTIFICATION",
     },
     // Spread the data fields into top-level custom keys (matching fcm.ts pattern)
-    ...(message.data ?? {}),
+    ...data,
   };
 
   try {

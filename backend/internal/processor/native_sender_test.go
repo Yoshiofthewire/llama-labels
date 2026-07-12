@@ -160,6 +160,32 @@ func TestNewRelaySenderFromEnvAutoRegisterPersistsAndReuses(t *testing.T) {
 	}
 }
 
+// Apple platforms (iOS and macOS) must route to the APNs sender; everything
+// else (including empty/unknown) falls back to FCM.
+func TestDispatcherSenderForRoutesApplePlatformsToAPNs(t *testing.T) {
+	fcm := &RelaySender{}
+	apns := &RelaySender{}
+	d := &NativePushDispatcher{fcmSender: fcm, apnsSender: apns}
+
+	cases := []struct {
+		platform string
+		want     *RelaySender
+	}{
+		{"ios", apns},
+		{"iOS ", apns},
+		{"macos", apns},
+		{"MacOS", apns},
+		{"android", fcm},
+		{"", fcm},
+		{"windows", fcm},
+	}
+	for _, c := range cases {
+		if got := d.senderFor(c.platform); got != c.want {
+			t.Errorf("senderFor(%q) routed to the wrong sender", c.platform)
+		}
+	}
+}
+
 // An explicit PUSH_RELAY_KEY takes precedence and never triggers registration or
 // touches the key file.
 func TestNewRelaySenderFromEnvExplicitKeyWins(t *testing.T) {

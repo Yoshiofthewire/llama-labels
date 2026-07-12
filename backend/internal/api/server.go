@@ -1345,7 +1345,7 @@ func (s *Server) handleNotificationNativeDevices(w http.ResponseWriter, r *http.
 func normalizeNativePlatform(platform string) string {
 	clean := strings.ToLower(strings.TrimSpace(platform))
 	switch clean {
-	case "ios", "android":
+	case "ios", "macos", "android":
 		return clean
 	default:
 		return "android"
