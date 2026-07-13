@@ -142,6 +142,51 @@ func TestNativeDevicesSyncAcrossStoreInstances(t *testing.T) {
 	}
 }
 
+func TestUpsertNativeDeviceMergesBySamePushToken(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// First registration without a device ID mints one.
+	if err := s.UpsertNativeDevice(NativeDevice{Platform: "macos", PushToken: "tok-mac", DeviceName: "Mac 1"}); err != nil {
+		t.Fatalf("UpsertNativeDevice: %v", err)
+	}
+	first := s.ListNativeDevices()
+	if len(first) != 1 || first[0].DeviceID == "" {
+		t.Fatalf("ListNativeDevices after first upsert = %+v, want 1 device with minted ID", first)
+	}
+
+	// Re-registering the same token+platform without an ID (a re-pair from a
+	// fresh deep link) must update the row, not pair the device twice.
+	if err := s.UpsertNativeDevice(NativeDevice{Platform: "macos", PushToken: "tok-mac", DeviceName: "Mac 2"}); err != nil {
+		t.Fatalf("UpsertNativeDevice: %v", err)
+	}
+	merged := s.ListNativeDevices()
+	if len(merged) != 1 {
+		t.Fatalf("ListNativeDevices len = %d, want 1 (same token must merge)", len(merged))
+	}
+	if merged[0].DeviceID != first[0].DeviceID {
+		t.Fatalf("deviceId = %q, want original %q", merged[0].DeviceID, first[0].DeviceID)
+	}
+	if merged[0].DeviceName != "Mac 2" {
+		t.Fatalf("deviceName = %q, want updated %q", merged[0].DeviceName, "Mac 2")
+	}
+	if merged[0].RegisteredAt != first[0].RegisteredAt {
+		t.Fatalf("registeredAt = %q, want preserved %q", merged[0].RegisteredAt, first[0].RegisteredAt)
+	}
+
+	// Same token on a different platform stays a separate device (simulator
+	// placeholder tokens collide across platforms).
+	if err := s.UpsertNativeDevice(NativeDevice{Platform: "ios", PushToken: "tok-mac"}); err != nil {
+		t.Fatalf("UpsertNativeDevice: %v", err)
+	}
+	if got := len(s.ListNativeDevices()); got != 2 {
+		t.Fatalf("ListNativeDevices len = %d, want 2 (different platform must not merge)", got)
+	}
+}
+
 func TestSetCheckpointDoesNotWipeNativeDevices(t *testing.T) {
 	dir := t.TempDir()
 

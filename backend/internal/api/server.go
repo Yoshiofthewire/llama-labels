@@ -1293,14 +1293,15 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Resolve the canonical device ID by token: the upsert may have merged
+	// this registration into an existing row (same token + platform), whose
+	// ID wins over whatever the request carried.
 	devices := store.ListNativeDevices()
 	registeredDeviceID := device.DeviceID
-	if registeredDeviceID == "" {
-		for i := len(devices) - 1; i >= 0; i-- {
-			if strings.TrimSpace(devices[i].PushToken) == deviceToken {
-				registeredDeviceID = devices[i].DeviceID
-				break
-			}
+	for i := len(devices) - 1; i >= 0; i-- {
+		if strings.TrimSpace(devices[i].PushToken) == deviceToken && devices[i].Platform == device.Platform {
+			registeredDeviceID = devices[i].DeviceID
+			break
 		}
 	}
 

@@ -621,6 +621,21 @@ func (s *Store) UpsertNativeDevice(device NativeDevice) error {
 		}
 	}
 
+	// Same push token + platform is the same physical device re-registering
+	// without its device ID (e.g. a re-pair from a fresh deep link): update
+	// that row in place instead of pairing the device a second time.
+	if device.PushToken != "" {
+		for i, existing := range s.nativeDevices {
+			if existing.PushToken == device.PushToken && existing.Platform == device.Platform {
+				device.DeviceID = existing.DeviceID
+				device.RegisteredAt = existing.RegisteredAt
+				s.nativeDevices[i] = device
+				s.nativeDevicesDirty = true
+				return s.persistLocked()
+			}
+		}
+	}
+
 	s.nativeDevices = append(s.nativeDevices, device)
 	s.nativeDevicesDirty = true
 	return s.persistLocked()
