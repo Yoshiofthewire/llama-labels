@@ -229,6 +229,8 @@ func (s *Server) Run() error {
 	mux.HandleFunc("POST /api/pgp/identity/import", s.withAuth(s.handlePGPIdentityImport))
 	mux.HandleFunc("GET /api/pgp/identity", s.withAuth(s.handlePGPIdentity))
 	mux.HandleFunc("DELETE /api/pgp/identity", s.withAuth(s.handlePGPIdentity))
+	mux.HandleFunc("GET /api/pgp/keyserver/lookup", s.withAuth(s.handlePGPKeyserverLookup))
+	mux.HandleFunc("POST /api/pgp/recipients/check", s.withAuth(s.handlePGPRecipientsCheck))
 	mux.HandleFunc("GET /api/groups", s.withAuth(s.handleGroups))
 	mux.HandleFunc("POST /api/groups", s.withAuth(s.handleGroups))
 	mux.HandleFunc("PUT /api/groups/{id}", s.withAuth(s.handleGroupByID))
