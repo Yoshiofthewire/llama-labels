@@ -3,6 +3,7 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-r
 import Quill from "quill";
 import "quill/dist/quill.snow.css";
 import { deleteJSON, getJSON, postJSON, putJSON, toErrorMessage } from "./api/client";
+import { checkPGPRecipients } from "./api/pgp";
 import { AuthContext, type AuthState } from "./auth";
 import { ConfigPage } from "./pages/ConfigPage";
 import { ContactsPage } from "./pages/ContactsPage";
@@ -157,6 +158,9 @@ export function App() {
   const [composeError, setComposeError] = useState("");
   const [composeSuccess, setComposeSuccess] = useState("");
   const [composeAttachments, setComposeAttachments] = useState<ComposeAttachment[]>([]);
+  const [composeEncrypt, setComposeEncrypt] = useState(false);
+  const [composeSign, setComposeSign] = useState(false);
+  const [composeRecipientKeyWarning, setComposeRecipientKeyWarning] = useState("");
   const quillEditorRef = useRef<HTMLDivElement | null>(null);
   const quillInstanceRef = useRef<Quill | null>(null);
   const composeDialogRef = useRef<HTMLDialogElement | null>(null);
@@ -463,6 +467,9 @@ export function App() {
     setComposeError("");
     setComposeSuccess("");
     setComposeAttachments([]);
+    setComposeEncrypt(false);
+    setComposeSign(false);
+    setComposeRecipientKeyWarning("");
     if (attachmentInputRef.current) {
       attachmentInputRef.current.value = "";
     }
@@ -540,6 +547,39 @@ export function App() {
     return "custom";
   }
 
+  useEffect(() => {
+    if (!composeEncrypt) {
+      setComposeRecipientKeyWarning("");
+      return;
+    }
+    const addresses = [composeTo, composeCc, composeBcc]
+      .join(",")
+      .split(",")
+      .map((a) => a.trim())
+      .filter(Boolean);
+    if (addresses.length === 0) {
+      setComposeRecipientKeyWarning("");
+      return;
+    }
+    let cancelled = false;
+    checkPGPRecipients(addresses)
+      .then(({ results }) => {
+        if (cancelled) return;
+        const missing = results.filter((r) => !r.hasKey).map((r) => r.address);
+        setComposeRecipientKeyWarning(
+          missing.length > 0
+            ? `No PGP key on file for: ${missing.join(", ")} — they'll receive a secure link instead.`
+            : ""
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setComposeRecipientKeyWarning("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [composeEncrypt, composeTo, composeCc, composeBcc]);
+
   async function sendComposeEmail() {
     const to = composeTo.trim();
     if (!to) {
@@ -558,7 +598,9 @@ export function App() {
         subject: composeSubject,
         body,
         mode: "html",
-        attachments: composeAttachments.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 }))
+        attachments: composeAttachments.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 })),
+        encrypt: composeEncrypt,
+        sign: composeSign
       });
       setComposeOpen(false);
       resetComposeForm();
@@ -926,6 +968,14 @@ export function App() {
                 <button type="button" className="compose-save-draft" onClick={() => void saveComposeDraft()} disabled={composeSending || composeSavingDraft}>Save Draft</button>
                 <button type="button" className="compose-attach" onClick={() => attachmentInputRef.current?.click()} disabled={composeSending || composeSavingDraft}>📎 Attach</button>
                 <button type="button" className="compose-trash" onClick={trashComposeDraft} disabled={composeSending || composeSavingDraft}>Trash</button>
+                <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.85rem" }}>
+                  <input type="checkbox" checked={composeEncrypt} onChange={(e) => setComposeEncrypt(e.target.checked)} />
+                  Encrypt
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.85rem" }}>
+                  <input type="checkbox" checked={composeSign} onChange={(e) => setComposeSign(e.target.checked)} />
+                  Sign
+                </label>
                 <input
                   ref={attachmentInputRef}
                   type="file"
@@ -936,6 +986,9 @@ export function App() {
               </div>
               <button type="button" className="compose-close" onClick={closeComposeWindow} disabled={composeSending || composeSavingDraft}>Close</button>
             </div>
+            {composeRecipientKeyWarning ? (
+              <p className="compose-pgp-warning">{composeRecipientKeyWarning}</p>
+            ) : null}
 
             {composeError ? <p className="notice notice-error" style={{ margin: 0 }}>Send failed: {composeError}</p> : null}
             {composeSuccess ? <p className="notice notice-success" style={{ margin: 0 }}>{composeSuccess}</p> : null}

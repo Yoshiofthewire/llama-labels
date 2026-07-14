@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { getJSON, postJSON, putJSON, toErrorMessage } from "../api/client";
+import { getPGPIdentity, generatePGPIdentity, importPGPIdentity, deletePGPIdentity, type PGPIdentity } from "../api/pgp";
 
 type ApproverDevice = {
   deviceId: string;
@@ -45,6 +46,81 @@ export function SecurityPage() {
   const [showDisable, setShowDisable] = useState(false);
   const [regeneratePassword, setRegeneratePassword] = useState("");
   const [showRegenerate, setShowRegenerate] = useState(false);
+
+  // PGP identity state.
+  const [pgpIdentity, setPgpIdentity] = useState<PGPIdentity | null>(null);
+  const [pgpLoading, setPgpLoading] = useState(true);
+  const [pgpBusy, setPgpBusy] = useState(false);
+  const [pgpStatus, setPgpStatus] = useState("");
+  const [pgpImportOpen, setPgpImportOpen] = useState(false);
+  const [pgpImportKey, setPgpImportKey] = useState("");
+  const [pgpImportPassphrase, setPgpImportPassphrase] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    getPGPIdentity()
+      .then((id) => {
+        if (!cancelled) setPgpIdentity(id);
+      })
+      .catch(() => {
+        if (!cancelled) setPgpIdentity(null);
+      })
+      .finally(() => {
+        if (!cancelled) setPgpLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleGeneratePGPIdentity() {
+    setPgpBusy(true);
+    setPgpStatus("");
+    try {
+      const id = await generatePGPIdentity();
+      setPgpIdentity(id);
+      setPgpStatus("New PGP identity generated.");
+    } catch (e) {
+      setPgpStatus(`Failed to generate identity: ${toErrorMessage(e, "unknown error")}`);
+    } finally {
+      setPgpBusy(false);
+    }
+  }
+
+  async function handleImportPGPIdentity(e: FormEvent) {
+    e.preventDefault();
+    setPgpBusy(true);
+    setPgpStatus("");
+    try {
+      const id = await importPGPIdentity(pgpImportKey, pgpImportPassphrase);
+      setPgpIdentity(id);
+      setPgpImportOpen(false);
+      setPgpImportKey("");
+      setPgpImportPassphrase("");
+      setPgpStatus("PGP identity imported.");
+    } catch (e) {
+      setPgpStatus(`Failed to import identity: ${toErrorMessage(e, "unknown error")}`);
+    } finally {
+      setPgpBusy(false);
+    }
+  }
+
+  async function handleDeletePGPIdentity() {
+    if (!window.confirm("Delete your PGP identity? Mail encrypted to you will no longer be readable.")) {
+      return;
+    }
+    setPgpBusy(true);
+    setPgpStatus("");
+    try {
+      await deletePGPIdentity();
+      setPgpIdentity(null);
+      setPgpStatus("PGP identity deleted.");
+    } catch (e) {
+      setPgpStatus(`Failed to delete identity: ${toErrorMessage(e, "unknown error")}`);
+    } finally {
+      setPgpBusy(false);
+    }
+  }
 
   async function refreshStatus() {
     try {
@@ -398,6 +474,65 @@ export function SecurityPage() {
               )}
             </div>
           )}
+        </div>
+
+        <div className="security-card">
+          <div className="security-card-head">
+            <h3>Email Encryption (PGP)</h3>
+            <span className={`security-badge ${pgpIdentity ? "security-badge-on" : "security-badge-off"}`}>
+              <span className="security-dot" aria-hidden="true" />
+              {pgpIdentity ? "configured" : "not configured"}
+            </span>
+          </div>
+          {pgpLoading ? (
+            <p className="contacts-muted">Loading...</p>
+          ) : pgpIdentity ? (
+            <>
+              <p className="contacts-pgp-fingerprint">
+                Fingerprint: {pgpIdentity.fingerprint} · Source: {pgpIdentity.source}
+              </p>
+              <details>
+                <summary className="contacts-muted">Show public key</summary>
+                <pre className="contact-details-notes">{pgpIdentity.publicKey}</pre>
+              </details>
+              <button type="button" onClick={() => void handleDeletePGPIdentity()} disabled={pgpBusy}>
+                Delete identity
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" onClick={() => void handleGeneratePGPIdentity()} disabled={pgpBusy}>
+                Generate new identity
+              </button>
+              <button type="button" onClick={() => setPgpImportOpen(!pgpImportOpen)} disabled={pgpBusy}>
+                Import existing key
+              </button>
+              {pgpImportOpen ? (
+                <form onSubmit={(e) => void handleImportPGPIdentity(e)}>
+                  <label>
+                    <div>Armored private key</div>
+                    <textarea
+                      value={pgpImportKey}
+                      onChange={(e) => setPgpImportKey(e.target.value)}
+                      rows={4}
+                      placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----"
+                      required
+                    />
+                  </label>
+                  <label>
+                    <div>Passphrase (leave blank if none)</div>
+                    <input
+                      type="password"
+                      value={pgpImportPassphrase}
+                      onChange={(e) => setPgpImportPassphrase(e.target.value)}
+                    />
+                  </label>
+                  <button type="submit" disabled={pgpBusy}>Import</button>
+                </form>
+              ) : null}
+            </>
+          )}
+          {pgpStatus ? <p className="contacts-muted">{pgpStatus}</p> : null}
         </div>
       </div>
     </section>

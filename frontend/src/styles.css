@@ -2426,6 +2426,12 @@ pre {
   color: #c0392b;
 }
 
+.compose-pgp-warning {
+  margin: 4px 16px 0;
+  font-size: 0.82rem;
+  color: #c0392b;
+}
+
 .contact-details-backdrop {
   position: fixed;
   inset: 0;
