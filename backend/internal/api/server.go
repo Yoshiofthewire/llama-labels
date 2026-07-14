@@ -84,6 +84,7 @@ type Server struct {
 	mfaChallenges        *mfa.Store
 	pairingSecret        string
 	serverBaseURL        string
+	baseURLFallbackWarn  sync.Once
 	nativePushDispatcher *processor.NativePushDispatcher
 	pickupStore          *pgpmail.PickupStore
 
@@ -106,7 +107,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 	logPath := filepath.Join(config.EnvOrDefault("LOG_DIR", "/llama_lab/logs"), "app.log")
 	imapConfigKeyPath := config.EnvOrDefault("IMAP_CONFIG_KEY_FILE", "/llama_lab/private/imap-config.key")
 	totpSecretKeyPath := config.EnvOrDefault("TOTP_SECRET_KEY_FILE", "/llama_lab/private/totp-secret.key")
-	pgpPrivateKeyPath := config.EnvOrDefault("PGP_PRIVATE_KEY_KEY_FILE", "/llama_lab/private/pgp-private-key.key")
+	pgpPrivateKeyPath := config.EnvOrDefault("PGP_PRIVATE_KEY_FILE", "/llama_lab/private/pgp-private-key.key")
 	pickupStoreKeyPath := config.EnvOrDefault("PICKUP_STORE_KEY_FILE", "/llama_lab/private/pickup-store.key")
 	pairingSecret := strings.TrimSpace(os.Getenv("PAIRING_SECRET"))
 	return &Server{
@@ -807,7 +808,7 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	encrypted, eerr := pgpmail.EncryptMIME(msg, recipientKeys, signer)
+	encrypted, eerr := pgpmail.EncryptMIME(msg, recipientKeys, encryptSigner(signer, req.Sign))
 	if eerr != nil {
 		http.Error(w, "failed to encrypt message", http.StatusInternalServerError)
 		return
@@ -823,6 +824,22 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("pickup notification send failed", "recipient", recipient, "error", err.Error())
 		}
 	}
+}
+
+// encryptSigner decides which signer identity (if any) should be embedded
+// into an encrypted message. Encrypt and Sign are independent per-email
+// toggles: an identity being loaded (because Encrypt requires checking
+// whether one exists, or because Sign itself was requested) must not imply
+// the message gets signed. Only pass a signer through to EncryptMIME when
+// the caller explicitly asked to sign — otherwise Encrypt=true, Sign=false
+// would silently produce a signed-and-encrypted message whenever the sender
+// happens to have a PGP identity configured, costing them deniability they
+// never asked to give up.
+func encryptSigner(signer *pgpmail.Identity, sign bool) *pgpmail.Identity {
+	if !sign {
+		return nil
+	}
+	return signer
 }
 
 // buildEncryptedSendArgs computes the two distinct recipient views needed by

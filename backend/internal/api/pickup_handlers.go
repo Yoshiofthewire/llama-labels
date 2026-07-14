@@ -84,10 +84,20 @@ func (s *Server) sendPickupNotification(userID, from, recipient, subject, plainB
 // pickupBaseURL is the externally-reachable base URL used to build pickup
 // links, preferring the explicit SERVER_BASE_URL override — pickup
 // notification emails are sent outside any HTTP request context, so
-// externalBaseURL's X-Forwarded-* header trick isn't available here.
+// externalBaseURL's X-Forwarded-* header trick isn't available here. It is
+// also used to build the QR key-exchange URL (handlePGPQRToken).
+//
+// When SERVER_BASE_URL is unset, this falls back to a localhost URL so the
+// feature still nominally works in local/dev setups, but that fallback is
+// silently wrong for anyone else: pickup links emailed to recipients and QR
+// codes scanned by other devices will point at the operator's own machine.
+// Log a warning once so the degraded state is observable instead of silent.
 func (s *Server) pickupBaseURL() string {
 	if s.serverBaseURL != "" {
 		return s.serverBaseURL
 	}
+	s.baseURLFallbackWarn.Do(func() {
+		s.logger.Error("SERVER_BASE_URL is not set; pickup links and PGP QR key-exchange URLs will fall back to http://localhost:5866 and will not work for remote recipients or scanners")
+	})
 	return "http://localhost:5866"
 }

@@ -84,7 +84,7 @@ func (s *Server) handlePGPRecipientsCheck(w http.ResponseWriter, r *http.Request
 	var req struct {
 		Addresses []string `json:"addresses"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"llama-lab/backend/internal/contacts"
+	"llama-lab/backend/internal/pgpmail"
 )
 
 func TestDecodeMailRequestParsesEncryptAndSign(t *testing.T) {
@@ -94,6 +95,33 @@ func TestBuildEncryptedSendArgsKeepsFullRecipientsInSentFolder(t *testing.T) {
 		if r == "bob@example.com" || r == "dave@example.com" {
 			t.Fatalf("smtpRecipients must not include no-key recipient %q, got %v", r, smtpRecipients)
 		}
+	}
+}
+
+// TestEncryptSignerOnlyPassesIdentityWhenSignRequested guards against the
+// encrypt-implicitly-signs regression: handleMailSend eagerly loads a signer
+// identity whenever req.Sign || req.Encrypt is true (so it can also cover
+// the sign-only branch and the "signing requires an identity" 400 check),
+// but that eagerly loaded identity must never leak into EncryptMIME's signer
+// argument unless the caller explicitly asked to sign. Encrypt and Sign are
+// independent per-email toggles.
+func TestEncryptSignerOnlyPassesIdentityWhenSignRequested(t *testing.T) {
+	identity, err := pgpmail.GenerateIdentity("Alice", "alice@example.com")
+	if err != nil {
+		t.Fatalf("GenerateIdentity: %v", err)
+	}
+
+	if got := encryptSigner(identity, false); got != nil {
+		t.Fatalf("Encrypt=true,Sign=false: expected nil signer even though an identity exists, got %+v", got)
+	}
+	if got := encryptSigner(identity, true); got != identity {
+		t.Fatalf("Encrypt=true,Sign=true: expected the loaded identity to be passed through")
+	}
+	if got := encryptSigner(nil, true); got != nil {
+		t.Fatalf("expected nil to stay nil when no identity was loaded, got %+v", got)
+	}
+	if got := encryptSigner(nil, false); got != nil {
+		t.Fatalf("expected nil to stay nil when no identity was loaded, got %+v", got)
 	}
 }
 

@@ -122,6 +122,14 @@ func TestEncryptDecryptMIMEWithAttachment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecryptMIME: %v", err)
 	}
+	// EncryptMIME was called with a nil signer above: the resulting
+	// ciphertext must not carry an embedded signature. This guards against
+	// the encrypt-implicitly-signs regression where a caller's eagerly
+	// loaded identity leaked into EncryptMIME's signer argument even when
+	// signing wasn't requested.
+	if result.Signed {
+		t.Fatal("expected unsigned result when EncryptMIME was called with a nil signer")
+	}
 	body, attachments, err := ParseContent(result.Content)
 	if err != nil {
 		t.Fatalf("ParseContent: %v", err)
