@@ -808,12 +808,9 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to encrypt message", http.StatusInternalServerError)
 		return
 	}
-	encTo := intersect(toList, withKeyEmails)
-	encCC := intersect(ccList, withKeyEmails)
-	encBCC := intersect(bccList, withKeyEmails)
-	encRecipients := append(append(append([]string{}, encTo...), encCC...), encBCC...)
+	draftTo, draftCC, draftBCC, encRecipients := buildEncryptedSendArgs(toList, ccList, bccList, withKeyEmails)
 
-	if !s.finishMailSend(w, r, ac.UserID, smtpHost, smtpPort, addr, payload.Username, payload.Password, from, encTo, encCC, encBCC, encRecipients, encrypted, req) {
+	if !s.finishMailSend(w, r, ac.UserID, smtpHost, smtpPort, addr, payload.Username, payload.Password, from, draftTo, draftCC, draftBCC, encRecipients, encrypted, req) {
 		return
 	}
 
@@ -822,6 +819,21 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("pickup notification send failed", "recipient", recipient, "error", err.Error())
 		}
 	}
+}
+
+// buildEncryptedSendArgs computes the two distinct recipient views needed by
+// finishMailSend's encrypted-send call: the Sent-folder record (draftTo/CC/BCC)
+// must list every original recipient, since without-key recipients still
+// receive something (a plaintext pickup-link notification, sent separately
+// by the caller) even though they're excluded from the encrypted SMTP
+// envelope. smtpRecipients is restricted to withKeyEmails because the
+// encrypted bytes must never be transmitted to a recipient without a key.
+func buildEncryptedSendArgs(toList, ccList, bccList, withKeyEmails []string) (draftTo, draftCC, draftBCC, smtpRecipients []string) {
+	encTo := intersect(toList, withKeyEmails)
+	encCC := intersect(ccList, withKeyEmails)
+	encBCC := intersect(bccList, withKeyEmails)
+	smtpRecipients = append(append(append([]string{}, encTo...), encCC...), encBCC...)
+	return toList, ccList, bccList, smtpRecipients
 }
 
 // finishMailSend sends msg over SMTP to recipients and best-effort saves it
