@@ -199,8 +199,9 @@ func TestNativeRegisterStoresDevice(t *testing.T) {
 	}
 }
 
-// macOS registrations must keep their platform (they route to APNs); only
-// genuinely unknown platforms fall back to android.
+// Platform names pass through unchanged (case/whitespace-normalized) so a
+// new client isn't silently mislabeled as android; only a truly empty
+// platform (legacy clients that omit the field) defaults to android.
 func TestNormalizeNativePlatform(t *testing.T) {
 	cases := []struct {
 		in, want string
@@ -209,8 +210,10 @@ func TestNormalizeNativePlatform(t *testing.T) {
 		{"macos", "macos"},
 		{" MacOS ", "macos"},
 		{"android", "android"},
+		{"linux", "linux"},
 		{"", "android"},
-		{"windows", "android"},
+		{"windows", "windows"},
+		{" Windows ", "windows"},
 	}
 	for _, c := range cases {
 		if got := normalizeNativePlatform(c.in); got != c.want {

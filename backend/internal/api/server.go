@@ -1440,7 +1440,11 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 	}
 
 	platform := normalizeNativePlatform(req.Platform)
-	transport := normalizeNativeTransport(req.Transport, req.Platform)
+	transport, err := normalizeNativeTransport(req.Transport, req.Platform)
+	if err != nil {
+		http.Error(w, "invalid transport: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// For UnifiedPush, the deviceToken is an HTTPS endpoint URL the client
 	// fully controls, not an opaque token — reject anything that could be used
@@ -1559,29 +1563,32 @@ func (s *Server) handleNotificationNativeDevices(w http.ResponseWriter, r *http.
 
 func normalizeNativePlatform(platform string) string {
 	clean := strings.ToLower(strings.TrimSpace(platform))
-	switch clean {
-	case "ios", "macos", "android":
-		return clean
-	default:
+	if clean == "" {
+		// Legacy clients that omit platform entirely default to android.
 		return "android"
 	}
+	// Pass any other platform name through unchanged so a new client isn't
+	// silently mislabeled as android — it just shows up under its own name.
+	return clean
 }
 
-func normalizeNativeTransport(transport, platform string) string {
+func normalizeNativeTransport(transport, platform string) (string, error) {
 	clean := strings.ToLower(strings.TrimSpace(transport))
 	switch clean {
 	case "fcm", "apns", "unifiedpush":
-		return clean
+		return clean, nil
 	case "":
 		// Derive from platform if transport not specified (legacy behavior).
 		switch strings.ToLower(strings.TrimSpace(platform)) {
 		case "ios", "macos":
-			return "apns"
+			return "apns", nil
+		case "linux":
+			return "unifiedpush", nil
 		default:
-			return "fcm"
+			return "fcm", nil
 		}
 	default:
-		return "fcm"
+		return "", fmt.Errorf("unrecognized transport %q", clean)
 	}
 }
 
