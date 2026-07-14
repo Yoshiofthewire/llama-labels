@@ -103,7 +103,8 @@ func (s *Server) userContactsStore(userID string) (*contacts.Store, error) {
 }
 
 // contactsFor resolves the calling user's contacts store from the request's
-// AuthContext (requires the handler to be wrapped in withAuth).
+// AuthContext (requires the handler to be wrapped in withAuth or withMailAuth,
+// or otherwise inject an AuthContext).
 func (s *Server) contactsFor(r *http.Request) (*contacts.Store, error) {
 	ac, ok := authFromContext(r)
 	if !ok {

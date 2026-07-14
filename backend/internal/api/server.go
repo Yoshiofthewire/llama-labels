@@ -227,7 +227,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/contacts/sync", s.handleContactsSync)
 	mux.HandleFunc("POST /api/contacts/sync", s.handleContactsSync)
 	mux.HandleFunc("POST /api/contacts/{id}/photo", s.withAuth(s.handleContactPhoto))
-	mux.HandleFunc("GET /api/contacts/{id}/photo", s.withAuth(s.handleContactPhoto))
+	mux.HandleFunc("GET /api/contacts/{id}/photo", s.withMailAuth(s.handleContactPhoto))
 	mux.HandleFunc("DELETE /api/contacts/{id}/photo", s.withAuth(s.handleContactPhoto))
 	mux.HandleFunc("POST /api/pgp/identity/generate", s.withAuth(s.handlePGPIdentityGenerate))
 	mux.HandleFunc("POST /api/pgp/identity/import", s.withAuth(s.handlePGPIdentityImport))
@@ -235,9 +235,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/pgp/identity", s.withAuth(s.handlePGPIdentity))
 	mux.HandleFunc("GET /api/pgp/keyserver/lookup", s.withAuth(s.handlePGPKeyserverLookup))
 	mux.HandleFunc("POST /api/pgp/recipients/check", s.withAuth(s.handlePGPRecipientsCheck))
-	mux.HandleFunc("GET /api/pgp/qr/token", s.withAuth(s.handlePGPQRToken))
+	mux.HandleFunc("GET /api/pgp/qr/token", s.withMailAuth(s.handlePGPQRToken))
 	mux.HandleFunc("GET /api/pgp/qr/key", s.handlePGPQRKey)
-	mux.HandleFunc("GET /api/groups", s.withAuth(s.handleGroups))
+	mux.HandleFunc("GET /api/groups", s.withMailAuth(s.handleGroups))
 	mux.HandleFunc("POST /api/groups", s.withAuth(s.handleGroups))
 	mux.HandleFunc("PUT /api/groups/{id}", s.withAuth(s.handleGroupByID))
 	mux.HandleFunc("DELETE /api/groups/{id}", s.withAuth(s.handleGroupByID))
@@ -3146,11 +3146,13 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// withMailAuth gates mail read/act-on endpoints (inbox, folders, actions,
-// draft, send) for either a web session cookie or mobile's paired
-// subscriberId/subscriberHash — see resolveMailAuthContext. IMAP/SMTP
-// account setup (/api/imap/config, /api/imap/test) intentionally stays on
-// withAuth only; mobile never configures or views raw mail credentials.
+// withMailAuth gates endpoints mobile clients need to reach without a web
+// session — mail read/act-on (inbox, folders, actions, draft, send), contacts
+// dedupe/groups/photo-get, and the PGP QR token mint — for either a web
+// session cookie or mobile's paired subscriberId/subscriberHash — see
+// resolveMailAuthContext. Despite the name, it's no longer mail-exclusive;
+// IMAP/SMTP account setup (/api/imap/config, /api/imap/test) and other
+// web-UI-only writes intentionally stay on withAuth only.
 func (s *Server) withMailAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ac, err := s.resolveMailAuthContext(r)

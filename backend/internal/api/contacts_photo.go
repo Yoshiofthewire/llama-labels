@@ -29,9 +29,9 @@ var contentTypeExt = map[string]string{
 }
 
 // handleContactPhoto uploads (POST), serves (GET), or clears (DELETE) a
-// single contact's photo. Auth is session-only for now (upload/delete are
-// web-UI-only workflows); GET could later accept the sub+hash pairing auth
-// mobile uses elsewhere, but nothing consumes that yet.
+// single contact's photo. Upload/delete are web-UI-only workflows and stay
+// session-only; GET also accepts the sub+hash pairing auth mobile uses
+// elsewhere (see withMailAuth on its route registration).
 func (s *Server) handleContactPhoto(w http.ResponseWriter, r *http.Request) {
 	store, err := s.contactsFor(r)
 	if err != nil {
