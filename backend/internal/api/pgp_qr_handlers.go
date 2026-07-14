@@ -10,6 +10,11 @@ import (
 // device can exchange for the caller's public key via handlePGPQRKey — used
 // for in-person QR-based contact key exchange.
 func (s *Server) handlePGPQRToken(w http.ResponseWriter, r *http.Request) {
+	if s.pairingSecret == "" {
+		http.Error(w, "pairing is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
 	ac, ok := authFromContext(r)
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
@@ -36,6 +41,11 @@ func (s *Server) handlePGPQRToken(w http.ResponseWriter, r *http.Request) {
 // token owner's armored public key + display name, for a scanning device to
 // offer as a new/updated contact PGP key.
 func (s *Server) handlePGPQRKey(w http.ResponseWriter, r *http.Request) {
+	if s.pairingSecret == "" {
+		http.Error(w, "pairing is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
 	token := strings.TrimSpace(r.URL.Query().Get("t"))
 	if token == "" {
 		http.Error(w, "token is required", http.StatusBadRequest)

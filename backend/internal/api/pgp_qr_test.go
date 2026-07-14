@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,5 +90,65 @@ func TestPGPQRKeyRejectsExpiredToken(t *testing.T) {
 	srv.handlePGPQRKey(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for expired token, got %d", rec.Code)
+	}
+}
+
+// TestPGPQREndpointsFailClosedOnUnsetPairingSecret guards against the QR
+// endpoints becoming a signing oracle when PAIRING_SECRET is left unset
+// (its documented "" default): with an empty HMAC key, anyone can forge a
+// validly-signed pairing token themselves, so both endpoints must refuse to
+// operate at all rather than accept tokens signed with "".
+func TestPGPQREndpointsFailClosedOnUnsetPairingSecret(t *testing.T) {
+	srv := newTestServer(t)
+	srv.pairingSecret = ""
+
+	tokenReq := httptest.NewRequest(http.MethodGet, "/api/pgp/qr/token", nil)
+	authRequest(srv, tokenReq)
+	tokenRec := httptest.NewRecorder()
+	srv.withAuth(srv.handlePGPQRToken)(tokenRec, tokenReq)
+	if tokenRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("qr/token with unset pairing secret: expected 503, got %d: %s", tokenRec.Code, tokenRec.Body.String())
+	}
+
+	keyReq := httptest.NewRequest(http.MethodGet, "/api/pgp/qr/key?t=anything", nil)
+	keyRec := httptest.NewRecorder()
+	srv.handlePGPQRKey(keyRec, keyReq)
+	if keyRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("qr/key with unset pairing secret: expected 503, got %d: %s", keyRec.Code, keyRec.Body.String())
+	}
+}
+
+// TestPGPQRKeyRejectsTamperedSignature drives the
+// subtle.ConstantTimeCompare mismatch branch in parsePairingTokenUserID
+// directly: the only prior negative test used an expired-but-validly-signed
+// token, which never reaches signature comparison failure. Here the token
+// is well-formed and unexpired, but its signature is corrupted, so it must
+// still be rejected.
+func TestPGPQRKeyRejectsTamperedSignature(t *testing.T) {
+	srv := newTestServer(t)
+	all, _ := srv.users.List()
+	userID := all[0].ID
+
+	token, _, err := srv.createPairingToken(userID, 2*time.Minute)
+	if err != nil {
+		t.Fatalf("createPairingToken: %v", err)
+	}
+
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 {
+		t.Fatalf("unexpected token shape: %q", token)
+	}
+	sigBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+	sigBytes[0] ^= 0xFF // flip a byte to invalidate the signature
+	tamperedToken := parts[0] + "." + base64.RawURLEncoding.EncodeToString(sigBytes)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/pgp/qr/key?t="+tamperedToken, nil)
+	rec := httptest.NewRecorder()
+	srv.handlePGPQRKey(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for tampered signature, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
