@@ -562,21 +562,24 @@ export function App() {
       return;
     }
     let cancelled = false;
-    checkPGPRecipients(addresses)
-      .then(({ results }) => {
-        if (cancelled) return;
-        const missing = results.filter((r) => !r.hasKey).map((r) => r.address);
-        setComposeRecipientKeyWarning(
-          missing.length > 0
-            ? `No PGP key on file for: ${missing.join(", ")} — they'll receive a secure link instead.`
-            : ""
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setComposeRecipientKeyWarning("");
-      });
+    const timeoutId = setTimeout(() => {
+      checkPGPRecipients(addresses)
+        .then(({ results }) => {
+          if (cancelled) return;
+          const missing = results.filter((r) => !r.hasKey).map((r) => r.address);
+          setComposeRecipientKeyWarning(
+            missing.length > 0
+              ? `No PGP key on file for: ${missing.join(", ")} — they'll receive a secure link instead.`
+              : ""
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setComposeRecipientKeyWarning("");
+        });
+    }, 300);
     return () => {
       cancelled = true;
+      clearTimeout(timeoutId);
     };
   }, [composeEncrypt, composeTo, composeCc, composeBcc]);
 
