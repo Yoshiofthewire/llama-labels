@@ -17,6 +17,11 @@ type InboxEmail = {
   detail?: string;
   atUtc: string;
   hasAttachments?: boolean;
+  pgpEncrypted?: boolean;
+  pgpSigned?: boolean;
+  pgpVerified?: boolean;
+  pgpSignerFingerprint?: string;
+  pgpDecryptError?: string;
 };
 
 // AttachmentInfo mirrors the /api/mail/attachments wire shape.
@@ -1382,6 +1387,20 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
             </div>
 
             <div className="email-reader-content">
+              {selected.pgpEncrypted ? (
+                <p style={{ margin: 0 }}>
+                  <span className={`security-badge ${selected.pgpDecryptError ? "security-badge-off" : "security-badge-on"}`}>
+                    <span className="security-dot" aria-hidden="true" />
+                    {selected.pgpDecryptError ? "PGP: could not decrypt" : "PGP: encrypted"}
+                  </span>
+                  {!selected.pgpDecryptError && selected.pgpSigned ? (
+                    <span className={`security-badge ${selected.pgpVerified ? "security-badge-on" : "security-badge-off"}`} style={{ marginLeft: 6 }}>
+                      <span className="security-dot" aria-hidden="true" />
+                      {selected.pgpVerified ? "signature verified" : "signature not verified"}
+                    </span>
+                  ) : null}
+                </p>
+              ) : null}
               <p style={{ margin: 0 }}><strong>Subject:</strong> {selected.subject || "(no subject)"}</p>
               <p style={{ margin: 0 }}><strong>Sender:</strong> {selected.sender || "-"}</p>
               <p style={{ margin: 0 }}><strong>Sent To:</strong> {selected.sentTo || "-"}</p>
