@@ -2793,6 +2793,123 @@ pre {
   font-size: 0.85rem;
 }
 
+.compose-token-field {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.compose-token-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 8px;
+  background: rgba(194, 154, 114, 0.18);
+  border: 1px solid rgba(194, 154, 114, 0.5);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  color: var(--ink-strong);
+}
+
+.compose-token-pill-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+.compose-token-pill-remove {
+  background: transparent;
+  border: none;
+  color: var(--ink-strong);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  font-size: 0.85rem;
+}
+
+.compose-token-input {
+  flex: 1 1 120px;
+  min-width: 120px;
+  border: none;
+  background: transparent;
+  color: var(--ink-strong);
+  padding: 4px 2px;
+}
+
+.compose-token-input:focus {
+  outline: none;
+}
+
+.recipient-autocomplete {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px;
+  background: #1e1c23;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.recipient-autocomplete-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.recipient-autocomplete-row.active,
+.recipient-autocomplete-row:hover {
+  background: rgba(194, 154, 114, 0.18);
+}
+
+.recipient-autocomplete-name {
+  color: var(--ink-strong);
+  font-size: 0.9rem;
+}
+
+.recipient-autocomplete-email {
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+.recipient-autocomplete-match {
+  color: var(--accent);
+}
+
+.recipient-autocomplete-empty {
+  padding: 6px 8px;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.compose-field-error {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(232, 221, 245, 0.15);
+  font-size: 0.85rem;
+}
+
 .compose-form-grid {
   display: grid;
   gap: 8px;
