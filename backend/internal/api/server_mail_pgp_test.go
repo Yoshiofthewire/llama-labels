@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/mail"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -70,6 +71,7 @@ func TestFindContactPGPKey(t *testing.T) {
 // never reached the network.
 func TestMailSendBlocksSigningWithRevokedIdentity(t *testing.T) {
 	srv := newTestServer(t)
+	srv.imapConfigKeyPath = filepath.Join(t.TempDir(), "imap-config.key")
 	all, _ := srv.users.List()
 	userID := all[0].ID
 
