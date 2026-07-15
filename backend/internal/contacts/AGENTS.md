@@ -17,6 +17,11 @@ through the existing sync model. Merge provenance is carried in two
 server-side-only fields: the survivor's `MergedUIDs` and each loser
 tombstone's `MergedInto`.
 
+Also provides `Store.Search(query, limit)`: a case-insensitive substring
+search over `FormattedName`/`GivenName`/`FamilyName`/emails, ranked by match
+quality and truncated to `limit`, backing the compose-autocomplete
+`GET /api/contacts/search` endpoint.
+
 ## Ownership
 
 All code under `backend/internal/contacts/`. Consumed by `api/` (web CRUD

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -365,4 +367,94 @@ func (s *Store) GC(retention time.Duration) error {
 	}
 	s.contacts = kept
 	return s.persistLocked()
+}
+
+// Search performs a case-insensitive substring search against FormattedName,
+// GivenName, FamilyName, and email addresses. Results are ranked by match
+// quality (prefix matches rank higher than substring matches, name matches
+// rank higher than email matches), sorted stable by score ascending, and
+// truncated to the specified limit. Deleted contacts are excluded.
+// Empty query or non-positive limit returns an empty slice.
+func (s *Store) Search(query string, limit int) []Contact {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.refreshFromDiskLocked()
+
+	if query = strings.TrimSpace(query); query == "" || limit <= 0 {
+		return []Contact{}
+	}
+
+	q := strings.ToLower(query)
+
+	type contactScore struct {
+		contact Contact
+		score   int
+	}
+
+	var results []contactScore
+
+	for _, c := range s.contacts {
+		if c.Deleted {
+			continue
+		}
+
+		score := -1 // -1 means no match
+
+		// 0: FormattedName has prefix q
+		if strings.HasPrefix(strings.ToLower(c.FormattedName), q) {
+			score = 0
+		} else {
+			// 1: any Emails[].Value has prefix q
+			if score < 0 {
+				for _, email := range c.Emails {
+					if strings.HasPrefix(strings.ToLower(email.Value), q) {
+						score = 1
+						break
+					}
+				}
+			}
+
+			// 2: FormattedName contains q
+			if score < 0 && strings.Contains(strings.ToLower(c.FormattedName), q) {
+				score = 2
+			}
+
+			// 3: GivenName or FamilyName contains q
+			if score < 0 && (strings.Contains(strings.ToLower(c.GivenName), q) ||
+				strings.Contains(strings.ToLower(c.FamilyName), q)) {
+				score = 3
+			}
+
+			// 4: any Emails[].Value contains q
+			if score < 0 {
+				for _, email := range c.Emails {
+					if strings.Contains(strings.ToLower(email.Value), q) {
+						score = 4
+						break
+					}
+				}
+			}
+		}
+
+		if score >= 0 {
+			results = append(results, contactScore{c, score})
+		}
+	}
+
+	// Sort by score ascending using SliceStable to keep stable secondary order
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].score < results[j].score
+	})
+
+	// Truncate to limit
+	if len(results) > limit {
+		results = results[:limit]
+	}
+
+	// Extract Contact values
+	out := make([]Contact, len(results))
+	for i, cs := range results {
+		out[i] = cs.contact
+	}
+	return out
 }

@@ -99,6 +99,7 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 | `GET\|DELETE /api/notifications/native/devices` | yes | Lists or removes the caller's native devices by `deviceId` |
 | `POST /api/notifications/native/unpair` | yes | Removes all of the caller's paired native devices |
 | `GET\|POST /api/contacts` | yes | List / create in the caller's address book |
+| `GET /api/contacts/search` | yes | Compose-autocomplete search (`?q=&limit=`) over the caller's address book; `limit` defaults to 5, capped at 25 |
 | `GET\|PUT\|DELETE /api/contacts/{id}` | yes | Read / update / tombstone-delete a single contact by `uid` |
 | `GET\|POST\|DELETE /api/contacts/dav-password` | yes | Manage the caller's app-specific CardDAV Basic Auth password (separate from their login password); `POST` returns the raw secret exactly once |
 | `GET\|POST /api/contacts/sync` | subscriber-hash | Mobile two-way sync (`?sub=&hash=&since=` / body `{baseCursor, changes[]}`), authenticated like `native/pull` — not a web session. Conflict policy is last-write-wins |

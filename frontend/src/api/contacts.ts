@@ -286,3 +286,7 @@ export async function uploadContactPhoto(uid: string, file: File): Promise<{ pho
 export function deleteContactPhoto(uid: string): Promise<{ ok: boolean }> {
   return deleteJSON<{ ok: boolean }>(`/api/contacts/${encodeURIComponent(uid)}/photo`);
 }
+
+export function searchContacts(q: string, limit = 5): Promise<{ contacts: Contact[] }> {
+  return getJSON(`/api/contacts/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+}

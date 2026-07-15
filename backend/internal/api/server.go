@@ -211,6 +211,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/contacts", s.withAuth(s.handleContacts))
 	mux.HandleFunc("POST /api/contacts", s.withAuth(s.handleContacts))
 	mux.HandleFunc("POST /api/contacts/dedupe", s.withMailAuth(s.handleContactsDedupe))
+	mux.HandleFunc("GET /api/contacts/search", s.withAuth(s.handleContactsSearch))
 	mux.HandleFunc("POST /api/contacts/bulk-delete", s.withAuth(s.handleContactsBulkDelete))
 	mux.HandleFunc("GET /api/contacts/export", s.withAuth(s.handleContactsExport))
 	mux.HandleFunc("POST /api/contacts/import", s.withAuth(s.handleContactsImport))
