@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
+	"llama-lab/backend/internal/pgpmail"
 )
 
 // keyserverBaseURL is a var (not const) so tests can point it at a local
@@ -64,11 +65,14 @@ func (s *Server) handlePGPKeyserverLookup(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	now := time.Now().Unix()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"email":       email,
 		"fingerprint": key.GetFingerprint(),
 		"keyId":       key.GetHexKeyID(),
 		"publicKey":   string(armored),
+		"revoked":     key.IsRevoked(now),
+		"expired":     key.IsExpired(now),
 	})
 }
 
@@ -98,11 +102,20 @@ func (s *Server) handlePGPRecipientsCheck(w http.ResponseWriter, r *http.Request
 	type addressStatus struct {
 		Address string `json:"address"`
 		HasKey  bool   `json:"hasKey"`
+		Revoked bool   `json:"revoked"`
+		Expired bool   `json:"expired"`
 	}
 	statuses := make([]addressStatus, 0, len(req.Addresses))
 	for _, addr := range req.Addresses {
-		_, hasKey := findContactPGPKey(contactsStore, addr)
-		statuses = append(statuses, addressStatus{Address: addr, HasKey: hasKey})
+		status := addressStatus{Address: addr}
+		if key, ok := findContactPGPKey(contactsStore, addr); ok {
+			if ks, err := pgpmail.CheckKeyStatus(key); err == nil {
+				status.Revoked = ks.Revoked
+				status.Expired = ks.Expired
+				status.HasKey = ks.Usable()
+			}
+		}
+		statuses = append(statuses, status)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": statuses})
 }

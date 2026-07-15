@@ -42,12 +42,17 @@ func TestPGPKeyserverLookupSuccess(t *testing.T) {
 	}
 	var resp struct {
 		Fingerprint string `json:"fingerprint"`
+		Revoked     bool   `json:"revoked"`
+		Expired     bool   `json:"expired"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	if resp.Fingerprint != id.Fingerprint {
 		t.Fatalf("fingerprint mismatch: got %s want %s", resp.Fingerprint, id.Fingerprint)
+	}
+	if resp.Revoked || resp.Expired {
+		t.Fatalf("expected a freshly generated key to be neither revoked nor expired, got %+v", resp)
 	}
 }
 
@@ -80,15 +85,21 @@ func TestPGPRecipientsCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("userContactsStore: %v", err)
 	}
-	if _, err := contactsStore.Upsert(contacts.Contact{
-		FormattedName: "Has Key",
-		Emails:        []contacts.ContactValue{{Value: "haskey@example.com"}},
-		PGPKey:        "-----BEGIN PGP PUBLIC KEY BLOCK-----\n...\n-----END PGP PUBLIC KEY BLOCK-----",
-	}); err != nil {
-		t.Fatalf("Upsert: %v", err)
+	hasKeyID, err := pgpmail.GenerateIdentity("Has Key", "haskey@example.com")
+	if err != nil {
+		t.Fatalf("GenerateIdentity: %v", err)
+	}
+	revokedKey := generateRevokedArmoredKey(t, "Revoked", "revoked@example.com")
+	for _, c := range []contacts.Contact{
+		{FormattedName: "Has Key", Emails: []contacts.ContactValue{{Value: "haskey@example.com"}}, PGPKey: hasKeyID.ArmoredPublicKey},
+		{FormattedName: "Revoked", Emails: []contacts.ContactValue{{Value: "revoked@example.com"}}, PGPKey: revokedKey},
+	} {
+		if _, err := contactsStore.Upsert(c); err != nil {
+			t.Fatalf("Upsert %s: %v", c.FormattedName, err)
+		}
 	}
 
-	body, _ := json.Marshal(map[string]any{"addresses": []string{"haskey@example.com", "nokey@example.com"}})
+	body, _ := json.Marshal(map[string]any{"addresses": []string{"haskey@example.com", "revoked@example.com", "nokey@example.com"}})
 	req := httptest.NewRequest(http.MethodPost, "/api/pgp/recipients/check", bytes.NewReader(body))
 	authRequest(srv, req)
 	rec := httptest.NewRecorder()
@@ -101,12 +112,23 @@ func TestPGPRecipientsCheck(t *testing.T) {
 		Results []struct {
 			Address string `json:"address"`
 			HasKey  bool   `json:"hasKey"`
+			Revoked bool   `json:"revoked"`
+			Expired bool   `json:"expired"`
 		} `json:"results"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(resp.Results) != 2 || !resp.Results[0].HasKey || resp.Results[1].HasKey {
-		t.Fatalf("unexpected results: %+v", resp.Results)
+	if len(resp.Results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(resp.Results))
+	}
+	if !resp.Results[0].HasKey || resp.Results[0].Revoked || resp.Results[0].Expired {
+		t.Fatalf("haskey@example.com: expected a usable key, got %+v", resp.Results[0])
+	}
+	if resp.Results[1].HasKey || !resp.Results[1].Revoked {
+		t.Fatalf("revoked@example.com: expected hasKey=false, revoked=true, got %+v", resp.Results[1])
+	}
+	if resp.Results[2].HasKey || resp.Results[2].Revoked || resp.Results[2].Expired {
+		t.Fatalf("nokey@example.com: expected no key at all, got %+v", resp.Results[2])
 	}
 }

@@ -15,6 +15,8 @@ type pgpIdentityResponse struct {
 	PublicKey   string `json:"publicKey"`
 	Source      string `json:"source"`
 	CreatedAt   string `json:"createdAt"`
+	Revoked     bool   `json:"revoked"`
+	Expired     bool   `json:"expired"`
 }
 
 func (s *Server) handlePGPIdentityGenerate(w http.ResponseWriter, r *http.Request) {
@@ -78,12 +80,15 @@ func (s *Server) storePGPIdentity(w http.ResponseWriter, userID string, id *pgpm
 		http.Error(w, "failed to store pgp identity", http.StatusInternalServerError)
 		return
 	}
+	status := id.Status()
 	writeJSON(w, http.StatusOK, pgpIdentityResponse{
 		Fingerprint: id.Fingerprint,
 		KeyID:       id.KeyID,
 		PublicKey:   id.ArmoredPublicKey,
 		Source:      source,
 		CreatedAt:   createdAt,
+		Revoked:     status.Revoked,
+		Expired:     status.Expired,
 	})
 }
 
@@ -104,12 +109,15 @@ func (s *Server) handlePGPIdentity(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "no pgp identity configured", http.StatusNotFound)
 			return
 		}
+		status, _ := pgpmail.CheckKeyStatus(u.PGPPublicKey)
 		writeJSON(w, http.StatusOK, pgpIdentityResponse{
 			Fingerprint: u.PGPFingerprint,
 			KeyID:       u.PGPKeyID,
 			PublicKey:   u.PGPPublicKey,
 			Source:      u.PGPKeySource,
 			CreatedAt:   u.PGPKeyCreatedAt,
+			Revoked:     status.Revoked,
+			Expired:     status.Expired,
 		})
 	case http.MethodDelete:
 		if _, err := s.users.ClearPGPIdentity(ac.UserID); err != nil {

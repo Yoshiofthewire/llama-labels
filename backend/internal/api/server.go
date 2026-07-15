@@ -685,20 +685,114 @@ func findContactPGPKey(store *contacts.Store, email string) (string, bool) {
 	return "", false
 }
 
-// intersect returns the elements of addrs that case-insensitively appear in
-// allowed, preserving addrs' order.
-func intersect(addrs, allowed []string) []string {
-	allowedSet := map[string]bool{}
-	for _, a := range allowed {
-		allowedSet[strings.ToLower(strings.TrimSpace(a))] = true
+// pgpRecipientPlan splits an encrypted send's To/CC/BCC recipients by PGP
+// key availability and status. To/CC recipients with a usable key share one
+// ciphertext, matching how a normal email is visible to every To/CC
+// recipient. BCC recipients are kept separate so each can be encrypted
+// individually in buildPGPDeliveries — sharing a ciphertext (and its
+// embedded recipient key IDs) with anyone else would deanonymize them.
+// Recipients with no key on file, or whose key is revoked or expired, land
+// in withoutKeyEmails and fall back to the existing plaintext pickup-link
+// notification.
+type pgpRecipientPlan struct {
+	toCCEmails       []string
+	toCCKeys         []string
+	bccEmails        []string
+	bccKeys          []string
+	withoutKeyEmails []string
+}
+
+// buildPGPRecipientPlan resolves each recipient's contact PGP key and
+// builds a pgpRecipientPlan. Recipients are deduplicated case-insensitively
+// across To+CC+BCC combined, keeping only the first occurrence — an address
+// listed in both To and BCC is treated as a To recipient.
+func buildPGPRecipientPlan(toList, ccList, bccList []string, contactsStore *contacts.Store) pgpRecipientPlan {
+	var plan pgpRecipientPlan
+	seen := map[string]bool{}
+
+	resolve := func(recipient string) (armoredKey string, usable bool) {
+		key, ok := findContactPGPKey(contactsStore, recipient)
+		if !ok {
+			return "", false
+		}
+		status, err := pgpmail.CheckKeyStatus(key)
+		if err != nil || !status.Usable() {
+			return "", false
+		}
+		return key, true
 	}
-	var out []string
-	for _, a := range addrs {
-		if allowedSet[strings.ToLower(strings.TrimSpace(a))] {
-			out = append(out, a)
+
+	toCC := append(append([]string{}, toList...), ccList...)
+	for _, recipient := range toCC {
+		lower := strings.ToLower(strings.TrimSpace(recipient))
+		if lower == "" || seen[lower] {
+			continue
+		}
+		seen[lower] = true
+		if key, ok := resolve(recipient); ok {
+			plan.toCCEmails = append(plan.toCCEmails, recipient)
+			plan.toCCKeys = append(plan.toCCKeys, key)
+		} else {
+			plan.withoutKeyEmails = append(plan.withoutKeyEmails, recipient)
 		}
 	}
-	return out
+	for _, recipient := range bccList {
+		lower := strings.ToLower(strings.TrimSpace(recipient))
+		if lower == "" || seen[lower] {
+			continue
+		}
+		seen[lower] = true
+		if key, ok := resolve(recipient); ok {
+			plan.bccEmails = append(plan.bccEmails, recipient)
+			plan.bccKeys = append(plan.bccKeys, key)
+		} else {
+			plan.withoutKeyEmails = append(plan.withoutKeyEmails, recipient)
+		}
+	}
+	return plan
+}
+
+// pgpDelivery is one PGP/MIME ciphertext and the SMTP recipient(s) it
+// should be delivered to in a single transaction.
+type pgpDelivery struct {
+	Recipients []string
+	Ciphertext []byte
+}
+
+// buildPGPDeliveries encrypts msg once for plan's shared To/CC recipients
+// (if any) and once individually for each of plan's BCC recipients, so no
+// BCC recipient's key ID ever appears in a ciphertext another recipient can
+// inspect. signer is passed straight through to EncryptMIME for every
+// delivery (nil if the caller didn't request signing).
+func buildPGPDeliveries(msg []byte, plan pgpRecipientPlan, signer *pgpmail.Identity) ([]pgpDelivery, error) {
+	var deliveries []pgpDelivery
+	if len(plan.toCCEmails) > 0 {
+		ciphertext, err := pgpmail.EncryptMIME(msg, plan.toCCKeys, signer)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt to/cc recipients: %w", err)
+		}
+		deliveries = append(deliveries, pgpDelivery{Recipients: plan.toCCEmails, Ciphertext: ciphertext})
+	}
+	for i, recipient := range plan.bccEmails {
+		ciphertext, err := pgpmail.EncryptMIME(msg, []string{plan.bccKeys[i]}, signer)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt bcc recipient %s: %w", recipient, err)
+		}
+		deliveries = append(deliveries, pgpDelivery{Recipients: []string{recipient}, Ciphertext: ciphertext})
+	}
+	return deliveries, nil
+}
+
+// smtpDeliver sends msg over SMTP to recipients, choosing implicit TLS
+// (port 465) or STARTTLS/plain auth otherwise. Extracted from
+// finishMailSend so per-BCC-recipient encrypted sends (handleMailSend) can
+// reuse the same transport logic for their own separate SMTP transactions.
+func smtpDeliver(smtpHost string, smtpPort int, addr, smtpUsername, smtpPassword, from string, recipients []string, msg []byte) error {
+	if smtpPort == 465 {
+		return smtpSendWithImplicitTLS(smtpHost, smtpPort, smtpUsername, smtpPassword, from, recipients, msg, 45*time.Second)
+	}
+	auth := smtp.PlainAuth("", smtpUsername, smtpPassword, smtpHost)
+	return smtpSendWithTimeout(addr, auth, from, recipients, msg, 45*time.Second)
 }
 
 func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
@@ -774,6 +868,12 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.Sign && signer != nil {
+		if status := signer.Status(); !status.Usable() {
+			http.Error(w, "cannot sign — your pgp identity is revoked or expired, generate or import a new one", http.StatusBadRequest)
+			return
+		}
+	}
 
 	if !req.Encrypt {
 		if req.Sign {
@@ -794,39 +894,41 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to open contacts store", http.StatusInternalServerError)
 		return
 	}
-	allRecipients := append(append(append([]string{}, toList...), ccList...), bccList...)
-	seen := map[string]bool{}
-	var withKeyEmails, withoutKeyEmails, recipientKeys []string
-	for _, recipient := range allRecipients {
-		lower := strings.ToLower(strings.TrimSpace(recipient))
-		if lower == "" || seen[lower] {
-			continue
-		}
-		seen[lower] = true
-		if key, ok := findContactPGPKey(contactsStore, recipient); ok {
-			withKeyEmails = append(withKeyEmails, recipient)
-			recipientKeys = append(recipientKeys, key)
-		} else {
-			withoutKeyEmails = append(withoutKeyEmails, recipient)
-		}
-	}
-	if len(withKeyEmails) == 0 {
+	plan := buildPGPRecipientPlan(toList, ccList, bccList, contactsStore)
+	if len(plan.toCCEmails) == 0 && len(plan.bccEmails) == 0 {
 		http.Error(w, "none of the recipients have a known pgp key — disable encryption or add keys to your contacts first", http.StatusBadRequest)
 		return
 	}
 
-	encrypted, eerr := pgpmail.EncryptMIME(msg, recipientKeys, encryptSigner(signer, req.Sign))
+	deliveries, eerr := buildPGPDeliveries(msg, plan, encryptSigner(signer, req.Sign))
 	if eerr != nil {
 		http.Error(w, "failed to encrypt message", http.StatusInternalServerError)
 		return
 	}
-	draftTo, draftCC, draftBCC, encRecipients := buildEncryptedSendArgs(toList, ccList, bccList, withKeyEmails)
 
-	if !s.finishMailSend(w, r, ac.UserID, smtpHost, smtpPort, addr, payload.Username, payload.Password, from, draftTo, draftCC, draftBCC, encRecipients, encrypted, req) {
+	// deliveries[0] is always the correct hard-error-gated send: buildPGPDeliveries
+	// guarantees the shared To/CC ciphertext (if any) comes first, otherwise the
+	// first BCC recipient's ciphertext is deliveries[0]. deliveries is guaranteed
+	// non-empty here because we already returned a 400 above when both
+	// plan.toCCEmails and plan.bccEmails were empty. Treating index 0 uniformly
+	// (rather than special-casing on len(plan.toCCEmails) > 0) avoids a BCC-only
+	// send picking an empty "main" delivery, which previously let finishMailSend
+	// report ok:true via its empty-recipient-list guard before any of the actual
+	// best-effort BCC sends had even been attempted.
+	mainRecipients, mainCiphertext := deliveries[0].Recipients, deliveries[0].Ciphertext
+	bccDeliveries := deliveries[1:]
+
+	if !s.finishMailSend(w, r, ac.UserID, smtpHost, smtpPort, addr, payload.Username, payload.Password, from, toList, ccList, bccList, mainRecipients, mainCiphertext, req) {
 		return
 	}
 
-	for _, recipient := range withoutKeyEmails {
+	for _, delivery := range bccDeliveries {
+		if err := smtpDeliver(smtpHost, smtpPort, addr, payload.Username, payload.Password, from, delivery.Recipients, delivery.Ciphertext); err != nil {
+			s.logger.Error("bcc pgp send failed", "recipient", delivery.Recipients[0], "error", err.Error())
+		}
+	}
+
+	for _, recipient := range plan.withoutKeyEmails {
 		if err := s.sendPickupNotification(ac.UserID, from, recipient, req.Subject, req.Body, smtpHost, smtpPort, addr, payload.Username, payload.Password); err != nil {
 			s.logger.Error("pickup notification send failed", "recipient", recipient, "error", err.Error())
 		}
@@ -849,21 +951,6 @@ func encryptSigner(signer *pgpmail.Identity, sign bool) *pgpmail.Identity {
 	return signer
 }
 
-// buildEncryptedSendArgs computes the two distinct recipient views needed by
-// finishMailSend's encrypted-send call: the Sent-folder record (draftTo/CC/BCC)
-// must list every original recipient, since without-key recipients still
-// receive something (a plaintext pickup-link notification, sent separately
-// by the caller) even though they're excluded from the encrypted SMTP
-// envelope. smtpRecipients is restricted to withKeyEmails because the
-// encrypted bytes must never be transmitted to a recipient without a key.
-func buildEncryptedSendArgs(toList, ccList, bccList, withKeyEmails []string) (draftTo, draftCC, draftBCC, smtpRecipients []string) {
-	encTo := intersect(toList, withKeyEmails)
-	encCC := intersect(ccList, withKeyEmails)
-	encBCC := intersect(bccList, withKeyEmails)
-	smtpRecipients = append(append(append([]string{}, encTo...), encCC...), encBCC...)
-	return toList, ccList, bccList, smtpRecipients
-}
-
 // finishMailSend sends msg over SMTP to recipients and best-effort saves it
 // to the Sent folder (as plaintext — see the plan's Global Constraints on
 // why the Sent copy isn't PGP-wrapped), writing the JSON response. Returns
@@ -872,17 +959,12 @@ func buildEncryptedSendArgs(toList, ccList, bccList, withKeyEmails []string) (dr
 func (s *Server) finishMailSend(w http.ResponseWriter, r *http.Request, userID, smtpHost string, smtpPort int, addr, smtpUsername, smtpPassword, from string, toList, ccList, bccList, recipients []string, msg []byte, req mailRequest) bool {
 	s.logger.Info("mail send requested", "smtpHost", smtpHost, "smtpPort", strconv.Itoa(smtpPort), "recipientCount", strconv.Itoa(len(recipients)))
 
-	var sendErr error
-	if smtpPort == 465 {
-		sendErr = smtpSendWithImplicitTLS(smtpHost, smtpPort, smtpUsername, smtpPassword, from, recipients, msg, 45*time.Second)
-	} else {
-		auth := smtp.PlainAuth("", smtpUsername, smtpPassword, smtpHost)
-		sendErr = smtpSendWithTimeout(addr, auth, from, recipients, msg, 45*time.Second)
-	}
-	if sendErr != nil {
-		s.logger.Error("mail send failed", "smtpHost", smtpHost, "smtpPort", strconv.Itoa(smtpPort), "error", sendErr.Error())
-		http.Error(w, fmt.Sprintf("failed to send email: %s", sendErr.Error()), http.StatusBadGateway)
-		return false
+	if len(recipients) > 0 {
+		if sendErr := smtpDeliver(smtpHost, smtpPort, addr, smtpUsername, smtpPassword, from, recipients, msg); sendErr != nil {
+			s.logger.Error("mail send failed", "smtpHost", smtpHost, "smtpPort", strconv.Itoa(smtpPort), "error", sendErr.Error())
+			http.Error(w, fmt.Sprintf("failed to send email: %s", sendErr.Error()), http.StatusBadGateway)
+			return false
+		}
 	}
 
 	warning := ""

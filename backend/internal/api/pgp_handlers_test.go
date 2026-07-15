@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 )
 
@@ -26,6 +27,9 @@ func TestPGPIdentityGenerateThenGetThenDelete(t *testing.T) {
 	}
 	if genResp.Fingerprint == "" || genResp.PublicKey == "" || genResp.Source != "generated" {
 		t.Fatalf("unexpected generate response: %+v", genResp)
+	}
+	if genResp.Revoked || genResp.Expired {
+		t.Fatalf("expected a freshly generated identity to be neither revoked nor expired, got %+v", genResp)
 	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/pgp/identity", nil)
@@ -106,5 +110,49 @@ func TestPGPIdentityImportWithPassphrase(t *testing.T) {
 	srv.withAuth(srv.handlePGPIdentityImport)(badRec, badReq)
 	if badRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for wrong passphrase, got %d", badRec.Code)
+	}
+}
+
+func TestPGPIdentityImportRevokedKeyReportsRevoked(t *testing.T) {
+	srv := newTestServer(t)
+
+	key, err := crypto.PGP().KeyGeneration().AddUserId("Revoked", "revoked@example.com").New().GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	if err := key.GetEntity().Revoke(packet.NoReason, "test revocation", &packet.Config{}); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	armored, err := key.Armor()
+	if err != nil {
+		t.Fatalf("Armor: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]string{"armoredPrivateKey": armored})
+	req := httptest.NewRequest(http.MethodPost, "/api/pgp/identity/import", bytes.NewReader(body))
+	authRequest(srv, req)
+	rec := httptest.NewRecorder()
+	srv.withAuth(srv.handlePGPIdentityImport)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("import: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var importResp pgpIdentityResponse
+	if err := json.NewDecoder(rec.Body).Decode(&importResp); err != nil {
+		t.Fatalf("decode import response: %v", err)
+	}
+	if !importResp.Revoked {
+		t.Fatalf("expected revoked=true on import response, got %+v", importResp)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/pgp/identity", nil)
+	authRequest(srv, getReq)
+	getRec := httptest.NewRecorder()
+	srv.withAuth(srv.handlePGPIdentity)(getRec, getReq)
+	var getResp pgpIdentityResponse
+	if err := json.NewDecoder(getRec.Body).Decode(&getResp); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	if !getResp.Revoked {
+		t.Fatalf("expected revoked=true on GET response, got %+v", getResp)
 	}
 }
