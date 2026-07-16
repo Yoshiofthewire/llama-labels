@@ -532,6 +532,115 @@ func TestServeInbox_TabBucketingByKeyword(t *testing.T) {
 	}
 }
 
+// findByMessageID locates one entry across every tab in resp, so callers
+// don't need to know which tab bucketing put it in.
+func findByMessageID(resp inboxResponse, messageID string) (inboxEmail, bool) {
+	for _, entries := range resp.ByTab {
+		for _, e := range entries {
+			if e.MessageID == messageID {
+				return e, true
+			}
+		}
+	}
+	return inboxEmail{}, false
+}
+
+// TestServeInbox_KeywordsPopulatedOnAllPaths proves entry.Keywords is
+// stamped inside bucket() regardless of which of serveInbox's 4 code paths
+// built the inboxEmail: cache-warm (classic warmed), live-fallback
+// (classic cold cache), delta-new, and delta-updated. A common bug shape
+// here is patching only one call site.
+func TestServeInbox_KeywordsPopulatedOnAllPaths(t *testing.T) {
+	srv := newTestServer(t)
+	all, err := srv.users.List()
+	if err != nil || len(all) == 0 {
+		t.Fatalf("no test user available: %v", err)
+	}
+	userID := all[0].ID
+	cfg := config.Default()
+
+	t.Run("cache-warm", func(t *testing.T) {
+		cache := testInboxCache(t)
+		if err := cache.Upsert("INBOX", []mailcache.Entry{
+			{UID: 1, MessageID: "1", Subject: "a", Sender: "a@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z", Body: "b1", Keywords: []string{"Work"}},
+		}); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+		fake := &fakeMailClient{}
+		rec := httptest.NewRecorder()
+		// Snapshot only reports warmed=true for a full window of exactly
+		// `limit` cached entries, so limit must match the 1 entry seeded
+		// above for this to exercise the cache-warm path rather than
+		// falling through to live-fallback.
+		srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 1, 0, false)
+		resp := decodeInboxResponse(t, rec)
+		e, ok := findByMessageID(resp, "1")
+		if !ok || len(e.Keywords) != 1 || e.Keywords[0] != "Work" {
+			t.Fatalf("expected Keywords=[Work] on cache-warm path, got %+v (found=%v)", e, ok)
+		}
+		if fake.unreadCalls != 0 {
+			t.Fatalf("expected zero live IMAP calls on a fully warmed cache, got %d", fake.unreadCalls)
+		}
+	})
+
+	t.Run("live-fallback", func(t *testing.T) {
+		cache := testInboxCache(t)
+		fake := &fakeMailClient{unread: []imapadapter.UnreadMessage{
+			{MessageID: "2", Subject: "b", Sender: "b@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z", Body: "b2", Keywords: []string{"Work"}},
+		}}
+		rec := httptest.NewRecorder()
+		srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, false)
+		resp := decodeInboxResponse(t, rec)
+		e, ok := findByMessageID(resp, "2")
+		if !ok || len(e.Keywords) != 1 || e.Keywords[0] != "Work" {
+			t.Fatalf("expected Keywords=[Work] on live-fallback path, got %+v (found=%v)", e, ok)
+		}
+	})
+
+	t.Run("delta-new", func(t *testing.T) {
+		cache := testInboxCache(t)
+		fake := &fakeMailClient{overviews: []imapadapter.Overview{
+			{UID: 3, MessageID: "3", Subject: "c", Sender: "c@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z", Keywords: []string{"Work"}},
+		}, bodies: map[int]string{3: "b3"}}
+		rec := httptest.NewRecorder()
+		srv.serveInbox(rec, context.Background(), userID, fake, cache, cfg, "", 10, 0, true)
+		resp := decodeInboxResponse(t, rec)
+		e, ok := findByMessageID(resp, "3")
+		if !ok || len(e.Keywords) != 1 || e.Keywords[0] != "Work" {
+			t.Fatalf("expected Keywords=[Work] on delta-new path, got %+v (found=%v)", e, ok)
+		}
+		if e.ChangeType != "new" {
+			t.Fatalf("expected changeType=new, got %+v", e)
+		}
+	})
+
+	t.Run("delta-updated", func(t *testing.T) {
+		cache := testInboxCache(t)
+		fake := &fakeMailClient{overviews: []imapadapter.Overview{
+			{UID: 4, MessageID: "4", Subject: "d", Sender: "d@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z"},
+		}, bodies: map[int]string{4: "b4"}}
+		first := httptest.NewRecorder()
+		srv.serveInbox(first, context.Background(), userID, fake, cache, cfg, "", 10, 0, true)
+		firstResp := decodeInboxResponse(t, first)
+
+		// Second delta call with the same UID now carrying a keyword flags
+		// it as "updated" (metadata changed, no new body fetch).
+		fake.overviews = []imapadapter.Overview{
+			{UID: 4, MessageID: "4", Subject: "d", Sender: "d@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z", Keywords: []string{"Work"}},
+		}
+		second := httptest.NewRecorder()
+		srv.serveInbox(second, context.Background(), userID, fake, cache, cfg, "", 10, firstResp.Cursor, true)
+		resp := decodeInboxResponse(t, second)
+		e, ok := findByMessageID(resp, "4")
+		if !ok || len(e.Keywords) != 1 || e.Keywords[0] != "Work" {
+			t.Fatalf("expected Keywords=[Work] on delta-updated path, got %+v (found=%v)", e, ok)
+		}
+		if e.ChangeType != "updated" {
+			t.Fatalf("expected changeType=updated, got %+v", e)
+		}
+	})
+}
+
 func TestFakeMailClient_RemoveLabelRecordsCall(t *testing.T) {
 	var client imapadapter.Client = &fakeMailClient{}
 	fake := client.(*fakeMailClient)

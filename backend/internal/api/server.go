@@ -2023,9 +2023,14 @@ type inboxEmail struct {
 	Subject   string `json:"subject"`
 	Body      string `json:"body,omitempty"`
 	Label     string `json:"label,omitempty"`
-	Status    string `json:"status"`
-	Detail    string `json:"detail,omitempty"`
-	AtUTC     string `json:"atUtc"`
+	// Keywords is every raw IMAP keyword flag on the message (unlike Label,
+	// which is just the first one matching an allowlisted tab). Stamped in
+	// bucket() alongside Label so every code path that builds an inboxEmail
+	// gets it for free.
+	Keywords []string `json:"keywords,omitempty"`
+	Status   string   `json:"status"`
+	Detail   string   `json:"detail,omitempty"`
+	AtUTC    string   `json:"atUtc"`
 	// HasAttachments is a warm-path hint for the inbox paperclip badge; see
 	// mailcache.Entry.HasAttachments. Absent when false.
 	HasAttachments bool `json:"hasAttachments,omitempty"`
@@ -2290,6 +2295,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 			}
 		}
 		entry.Label = tab
+		entry.Keywords = keywords
 		byTab[tab] = append(byTab[tab], entry)
 	}
 
