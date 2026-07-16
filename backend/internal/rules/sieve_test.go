@@ -200,6 +200,26 @@ func TestParseRuleText_Errors(t *testing.T) {
 			script:     "if exists [\"keyword\"] {\n  keep;\n}\n",
 			wantSubstr: "unsupported exists field \"keyword\"",
 		},
+		{
+			// Regression test for the unbounded-recursion issue found in the
+			// final whole-branch review: parseTest used to recurse on
+			// not/allof/anyof with no depth limit, so a script nesting
+			// allof(allof(allof(...))) deeply (bounded only by the 1 MiB
+			// request-body limit in rules_handlers.go) could drive parser
+			// recursion into the hundreds of thousands of stack frames — and,
+			// once such a rule parsed successfully and was stored, force
+			// engine.go's matchGroup/conditionMatches to re-walk that same
+			// deep tree on every message the poller evaluates thereafter.
+			// This nests allof() 50 levels deep, well past maxTestNestingDepth
+			// (32), and expects a clear rejection rather than success, a
+			// crash, or an unreasonably long parse.
+			name: "excessive allof nesting is rejected",
+			script: "if " + strings.Repeat("allof(", 50) +
+				`header :contains ["from"] "x"` +
+				strings.Repeat(")", 50) +
+				" {\n  keep;\n}\n",
+			wantSubstr: "test nesting exceeds maximum depth",
+		},
 	}
 
 	for _, tc := range tests {
@@ -212,6 +232,43 @@ func TestParseRuleText_Errors(t *testing.T) {
 				t.Fatalf("error = %q, want substring %q", err.Error(), tc.wantSubstr)
 			}
 		})
+	}
+}
+
+// TestParseRuleText_ReasonableNestingStillParses confirms maxTestNestingDepth
+// (32) doesn't affect any realistic hand-written rule: a script nesting
+// allof/anyof/not five keywords deep (four nested MatchGroup levels plus one
+// negation) — deeper than anything the flat GUI builder or a typical
+// hand-edited rule would ever produce, but nowhere near the new limit —
+// still parses successfully into the expected nested
+// MatchGroup/Condition.Group tree.
+func TestParseRuleText_ReasonableNestingStillParses(t *testing.T) {
+	script := "if allof(anyof(not allof(anyof(header :contains [\"from\"] \"acme\")))) {\n  keep;\n}\n"
+	got, err := ParseRuleText(script, Rule{})
+	if err != nil {
+		t.Fatalf("ParseRuleText: unexpected error for a reasonably-nested (4 level) rule: %v", err)
+	}
+
+	// Walk down the tree confirming the expected shape at each of the 4
+	// nested levels, ending on the negated leaf condition.
+	if got.Match.Op != "allof" || len(got.Match.Conditions) != 1 {
+		t.Fatalf("level 1 (allof): Match = %+v", got.Match)
+	}
+	level2 := got.Match.Conditions[0]
+	if level2.Group == nil || level2.Group.Op != "anyof" || len(level2.Group.Conditions) != 1 {
+		t.Fatalf("level 2 (anyof): %+v", level2)
+	}
+	level3 := level2.Group.Conditions[0]
+	if !level3.Negate || level3.Group == nil || level3.Group.Op != "allof" || len(level3.Group.Conditions) != 1 {
+		t.Fatalf("level 3 (not allof): %+v", level3)
+	}
+	level4 := level3.Group.Conditions[0]
+	if level4.Group == nil || level4.Group.Op != "anyof" || len(level4.Group.Conditions) != 1 {
+		t.Fatalf("level 4 (anyof): %+v", level4)
+	}
+	leaf := level4.Group.Conditions[0]
+	if leaf.Field != "from" || leaf.Comparator != "contains" || leaf.Value != "acme" {
+		t.Fatalf("leaf condition: %+v", leaf)
 	}
 }
 

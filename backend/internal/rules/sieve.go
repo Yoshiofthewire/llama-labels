@@ -285,9 +285,38 @@ func ParseRuleText(text string, existing Rule) (Rule, error) {
 	return result, nil
 }
 
+// maxTestNestingDepth bounds how many nested not/allof/anyof levels
+// parseTest will descend before rejecting the script. Without this bound, a
+// pathological script like allof(allof(allof(...))) nested ~1 MiB worth of
+// parens (the only existing limit is the request-body io.LimitReader in
+// rules_handlers.go) would drive parser recursion into the hundreds of
+// thousands of stack frames — and, once such a rule parsed successfully and
+// was stored, engine.go's matchGroup/conditionMatches mutual recursion would
+// re-walk that same deep tree on every message the poller evaluates, forever.
+// 32 is generous headroom past anything a human-written or GUI-round-tripped
+// (which is always exactly one flat level) Sieve rule would ever need.
+const maxTestNestingDepth = 32
+
 type sieveParser struct {
-	toks []token
-	pos  int
+	toks  []token
+	pos   int
+	depth int // current not/allof/anyof nesting depth, see maxTestNestingDepth
+}
+
+// enterTest records one more level of not/allof/anyof nesting and rejects
+// the script once maxTestNestingDepth is exceeded. Pair with `defer
+// p.exitTest()` at the call site so sibling tests (not just deeper ones)
+// correctly see the depth restored once a nested group finishes parsing.
+func (p *sieveParser) enterTest(line int) error {
+	p.depth++
+	if p.depth > maxTestNestingDepth {
+		return fmt.Errorf("line %d: test nesting exceeds maximum depth of %d", line, maxTestNestingDepth)
+	}
+	return nil
+}
+
+func (p *sieveParser) exitTest() {
+	p.depth--
 }
 
 func (p *sieveParser) peek() token { return p.toks[p.pos] }
@@ -403,6 +432,10 @@ func (p *sieveParser) parseTest() (Condition, error) {
 	switch {
 	case strings.EqualFold(t.text, "not"):
 		p.next()
+		if err := p.enterTest(t.line); err != nil {
+			return Condition{}, err
+		}
+		defer p.exitTest()
 		inner, err := p.parseTest()
 		if err != nil {
 			return Condition{}, err
@@ -413,6 +446,10 @@ func (p *sieveParser) parseTest() (Condition, error) {
 	case strings.EqualFold(t.text, "allof") || strings.EqualFold(t.text, "anyof"):
 		op := strings.ToLower(t.text)
 		p.next()
+		if err := p.enterTest(t.line); err != nil {
+			return Condition{}, err
+		}
+		defer p.exitTest()
 		if _, err := p.expect(tokLParen, "("); err != nil {
 			return Condition{}, err
 		}
