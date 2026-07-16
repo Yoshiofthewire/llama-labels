@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import QRCode from "qrcode";
 import { getJSON, postJSON, putJSON, toErrorMessage } from "../api/client";
 import { getPGPIdentity, generatePGPIdentity, importPGPIdentity, deletePGPIdentity, type PGPIdentity } from "../api/pgp";
+import { listContacts, type Contact } from "../api/contacts";
 
 type ApproverDevice = {
   deviceId: string;
@@ -55,6 +57,7 @@ export function SecurityPage() {
   const [pgpImportOpen, setPgpImportOpen] = useState(false);
   const [pgpImportKey, setPgpImportKey] = useState("");
   const [pgpImportPassphrase, setPgpImportPassphrase] = useState("");
+  const [selfContact, setSelfContact] = useState<Contact | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +70,20 @@ export function SecurityPage() {
       })
       .finally(() => {
         if (!cancelled) setPgpLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    listContacts()
+      .then((all) => {
+        if (!cancelled) setSelfContact(all.find((c) => c.isSelf) ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setSelfContact(null);
       });
     return () => {
       cancelled = true;
@@ -490,6 +507,13 @@ export function SecurityPage() {
             <>
               <p className="contacts-pgp-fingerprint">
                 Fingerprint: {pgpIdentity.fingerprint} · Source: {pgpIdentity.source}
+              </p>
+              <p className="contacts-muted">
+                {selfContact ? (
+                  <>Sharing contact card: {selfContact.fn} · <Link to="/contacts">Manage in Contacts</Link></>
+                ) : (
+                  <>No contact card set — <Link to="/contacts">add one in Contacts</Link> and mark it as yours to include it when sharing your PGP key.</>
+                )}
               </p>
               <details>
                 <summary className="contacts-muted">Show public key</summary>
