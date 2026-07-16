@@ -1,8 +1,8 @@
-<img src="./llamalabel.png" alt="Llama Labels" />
+<img src="./llamalabel.png" alt="KyPost" />
 
-# llama Mail
+# KyPost
 
-llama Mail is a self-hosted IMAP web client with automatic keyword labeling powered by a local Ollama model.
+KyPost is a self-hosted IMAP web client with automatic keyword labeling powered by a local Ollama model.
 
 It polls unread mail, classifies messages, applies IMAP keywords, and includes a full browser UI for reading, configuration, notifications, logs, and compose (send + draft).
 

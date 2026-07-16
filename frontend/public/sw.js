@@ -49,7 +49,7 @@ self.addEventListener("push", (event) => {
     }
   }
 
-  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title : "Llama Mail";
+  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title : "KyPost";
   const body = typeof payload.body === "string" ? payload.body : "You have a new notification.";
   const url = typeof payload.url === "string" && payload.url.trim() ? payload.url : "/notifications";
   const tag = typeof payload.tag === "string" && payload.tag.trim() ? payload.tag : undefined;

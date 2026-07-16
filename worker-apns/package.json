@@ -2,7 +2,7 @@
   "name": "llama-labels-push-relay-apns",
   "version": "1.0.0",
   "private": true,
-  "description": "Cloudflare Worker that delivers Llama Labels native push notifications to iOS devices via Apple Push Notification service (APNs).",
+  "description": "Cloudflare Worker that delivers KyPost native push notifications to iOS devices via Apple Push Notification service (APNs).",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

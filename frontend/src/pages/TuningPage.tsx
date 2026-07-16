@@ -133,7 +133,13 @@ export function TuningPage() {
                       </tbody>
                     </table>
                   </div>
-                  <PageTabs currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
+                  <PageTabs
+                    totalPages={totalPages}
+                    currentPage={currentPage}
+                    onSelect={setCurrentPage}
+                    classPrefix="tuning"
+                    ariaLabel="Decision pages"
+                  />
                 </>
               )}
             </>

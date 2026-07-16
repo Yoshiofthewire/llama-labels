@@ -367,7 +367,7 @@ export function NotificationsPage() {
     try {
       await registerDeviceForPush();
       const result = await postJSON<NotificationTestResponse>("/api/notifications/test", {
-        title: "Llama Mail Test Notification",
+        title: "KyPost Test Notification",
         body: "This test notification was sent to all of your subscribed devices."
       });
       const nativeDevices = result.nativeDevices ?? 0;
@@ -702,7 +702,7 @@ export function NotificationsPage() {
           <div className="notifications-android-head">
             <div>
               <h3>Mobile App Pairing</h3>
-              <p className="notifications-muted">Scan this QR code from the Llama Labels app to pair your device. The app receives the server URL automatically.</p>
+              <p className="notifications-muted">Scan this QR code from the KyPost app to pair your device. The app receives the server URL automatically.</p>
             </div>
             <button type="button" className="notifications-ghost" onClick={() => void refreshPairingStatus()}>
               Refresh

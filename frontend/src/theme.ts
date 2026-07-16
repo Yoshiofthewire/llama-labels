@@ -13,7 +13,9 @@ export const THEME_OPTIONS = [
   "Space",
   "Sky",
   "Forest",
-  "Sun"
+  "Sun",
+  "Patina Ky",
+  "Polished Ky"
 ] as const;
 
 export type ThemeName = (typeof THEME_OPTIONS)[number];
@@ -271,6 +273,42 @@ const themes: Record<ThemeName, ThemeVars> = {
     newEmailText: "#2a1808",
     buttonText: "#2a1808",
     linkBorder: "#caa670"
+  },
+  "Patina Ky": {
+    bg: "#0d0f14",
+    panel: "#161a22",
+    ink: "#64748b",
+    inkStrong: "#e2e8f0",
+    accent: "#4deeea",
+    accentSoft: "#0e4a48",
+    line: "#1e293b",
+    glow: "rgba(77, 238, 234, 0.22)",
+    sidebarStart: "#0d0f14",
+    sidebarEnd: "#1b212c",
+    newEmailBorder: "#0e9668",
+    newEmailStart: "#4deeea",
+    newEmailEnd: "#10b981",
+    newEmailText: "#04120d",
+    buttonText: "#04120d",
+    linkBorder: "#94a3b8"
+  },
+  "Polished Ky": {
+    bg: "#eef2f6",
+    panel: "#ffffff",
+    ink: "#475569",
+    inkStrong: "#0f172a",
+    accent: "#0891b2",
+    accentSoft: "#cffafe",
+    line: "#cbd5e1",
+    glow: "rgba(8, 145, 178, 0.18)",
+    sidebarStart: "#f1f5f9",
+    sidebarEnd: "#e2e8f0",
+    newEmailBorder: "#059669",
+    newEmailStart: "#0891b2",
+    newEmailEnd: "#10b981",
+    newEmailText: "#042f2e",
+    buttonText: "#042f2e",
+    linkBorder: "#64748b"
   }
 };
 

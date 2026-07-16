@@ -2096,6 +2096,28 @@ pre {
   font-size: 0.78rem;
 }
 
+.tuning-page-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.tuning-page-tab {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-strong);
+  font-size: 0.78rem;
+}
+
+.tuning-page-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
 .contacts-page-tab.active {
   background: var(--accent);
   border-color: var(--accent);

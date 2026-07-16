@@ -260,7 +260,7 @@ curl -X POST https://example.com/api/notifications/desktop/register \
   -H "Content-Type: application/json" \
   -d '{
     "pairingCode": "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6",
-    "appName": "Llama Labels Desktop",
+    "appName": "KyPost Desktop",
     "appVersion": "1.0.0",
     "platformInfo": "macOS/arm64"
   }'
@@ -326,7 +326,7 @@ Desktop app calls this endpoint to exchange pairing code for a session token.
 ```json
 {
   "pairingCode": "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6",
-  "appName": "Llama Labels Desktop",
+  "appName": "KyPost Desktop",
   "appVersion": "1.0.0",
   "platformInfo": "Linux/x86_64"
 }
@@ -468,7 +468,7 @@ Desktop app calls this endpoint to exchange pairing code for a session token.
   <array>
     <dict>
       <key>CFBundleURLName</key>
-      <string>Llama Labels Pairing</string>
+      <string>KyPost Pairing</string>
       <key>CFBundleURLSchemes</key>
       <array>
         <string>llamalabels</string>
@@ -482,12 +482,12 @@ Desktop app calls this endpoint to exchange pairing code for a session token.
 ```
 HKEY_CLASSES_ROOT
   llamalabels
-    (Default) = "URL:Llama Labels"
+    (Default) = "URL:KyPost"
     URL Protocol = ""
     shell
       open
         command
-          (Default) = "C:\Program Files\Llama Labels\app.exe" "%1"
+          (Default) = "C:\Program Files\KyPost\app.exe" "%1"
 ```
 
 **Linux (desktop file):**
@@ -518,7 +518,7 @@ def handle_deep_link(url):
             f"{server_url}/api/notifications/desktop/register",
             json={
                 "pairingCode": code,
-                "appName": "Llama Labels Desktop",
+                "appName": "KyPost Desktop",
                 "appVersion": "1.0.0",
                 "platformInfo": f"{sys.platform}/{platform.machine()}"
             },
@@ -713,7 +713,7 @@ class LlamaLabelsDesktopApp:
                 f"{server_url}/api/notifications/desktop/register",
                 json={
                     "pairingCode": code,
-                    "appName": "Llama Labels Desktop (Python Demo)",
+                    "appName": "KyPost Desktop (Python Demo)",
                     "appVersion": "0.1.0",
                     "platformInfo": f"{sys.platform}/python"
                 },

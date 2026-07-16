@@ -2,7 +2,7 @@
   "name": "llama-labels-push-relay",
   "version": "1.0.0",
   "private": true,
-  "description": "Cloudflare Worker that relays Llama Labels native push notifications to Firebase Cloud Messaging.",
+  "description": "Cloudflare Worker that relays KyPost native push notifications to Firebase Cloud Messaging.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

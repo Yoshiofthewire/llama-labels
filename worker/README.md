@@ -1,11 +1,11 @@
-# Llama Labels Push Relay (Cloudflare Worker)
+# KyPost Push Relay (Cloudflare Worker)
 
-This Worker centralizes native (FCM) push delivery for Llama Labels.
+This Worker centralizes native (FCM) push delivery for KyPost.
 
 The published mobile app is compiled against **one** Firebase project, so only a
 holder of that project's service account can deliver push to it. Instead of
 shipping that credential to every self-hosted server, the **maintainer** runs
-this one Worker. Self-hosted Llama Labels servers forward push requests to it,
+this one Worker. Self-hosted KyPost servers forward push requests to it,
 each authenticated with its own API key. Self-hosters need **no Firebase account
 and never recompile the app**.
 

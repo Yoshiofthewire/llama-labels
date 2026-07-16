@@ -1,8 +1,8 @@
-# Llama Labels Push Relay (APNs) — Cloudflare Worker
+# KyPost Push Relay (APNs) — Cloudflare Worker
 
 This Worker delivers native push notifications to iOS devices via Apple Push Notification service (APNs).
 
-The published iOS app is compiled with a single bundle ID (`com.urlxl.mail`), so only a holder of the corresponding Apple Developer Team ID can deliver push to it. Instead of shipping the APNs auth key (`.p8`) to every self-hosted server, the **maintainer** runs this Worker. Self-hosted Llama Labels servers forward push requests to it, each authenticated with its own API key. Self-hosters need **no Apple Developer account and never recompile the app**.
+The published iOS app is compiled with a single bundle ID (`com.urlxl.mail`), so only a holder of the corresponding Apple Developer Team ID can deliver push to it. Instead of shipping the APNs auth key (`.p8`) to every self-hosted server, the **maintainer** runs this Worker. Self-hosted KyPost servers forward push requests to it, each authenticated with its own API key. Self-hosters need **no Apple Developer account and never recompile the app**.
 
 ```
 self-hosted Go server  --(Bearer per-server key)-->  this Worker  --(APNs provider token)-->  APNs  -->  iOS Device

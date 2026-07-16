@@ -654,7 +654,7 @@ export function ConfigPage() {
             <h3>CardDAV Client</h3>
             <p className="config-muted">
               Pull contacts down from an external CardDAV server (iCloud, Google, Nextcloud, Fastmail, etc.) into your
-              Llama Labels address book. Imported contacts then reach the mobile app the same way locally-added ones do.
+              KyPost address book. Imported contacts then reach the mobile app the same way locally-added ones do.
             </p>
             <div className="config-grid config-grid-two">
               <label>
@@ -755,7 +755,7 @@ export function ConfigPage() {
           <div className="config-card">
             <h3>CardDAV Access</h3>
             <p className="config-muted">
-              Point a CardDAV-capable app (iOS/macOS Contacts, Nextcloud, Thunderbird, or the Llama Labels mobile app) at
+              Point a CardDAV-capable app (iOS/macOS Contacts, Nextcloud, Thunderbird, or the KyPost mobile app) at
               the address below using an app-specific password — never your account login password.
             </p>
             {davURL ? (

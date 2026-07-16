@@ -710,7 +710,7 @@ export function App() {
     <div className="shell">
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <img className="sidebar-llama-logo" src="/llamalabel.png" alt="Llama Labels" style={{ width: "100%", maxWidth: 180, display: "block", margin: "0 auto 0.75rem" }} />
+          <img className="sidebar-llama-logo" src="/llamalabel.png" alt="KyPost" style={{ width: "100%", maxWidth: 180, display: "block", margin: "0 auto 0.75rem" }} />
         </div>
         <button type="button" className="new-email-button" onClick={openComposeWindow}>
           New Email
@@ -967,7 +967,7 @@ export function App() {
           <div className="license-window-header">
             <div className="license-window-title">
               <div className="license-title-main">
-                <span className="license-app-name">llama Mail</span>
+                <span className="license-app-name">KyPost</span>
                 <span className="license-version-badge">v{APP_VERSION}</span>
               </div>
               <p className="license-title-sub">Developed by Busnes Games</p>

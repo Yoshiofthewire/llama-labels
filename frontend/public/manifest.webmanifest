@@ -1,6 +1,6 @@
 {
-  "name": "Llama Mail",
-  "short_name": "Llama Mail",
+  "name": "KyPost",
+  "short_name": "KyPost",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
