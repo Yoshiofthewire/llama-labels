@@ -280,7 +280,10 @@ func (s *Server) handleRulesRun(w http.ResponseWriter, r *http.Request) {
 		Limit   int    `json:"limit"`
 	}
 	if r.Body != nil {
-		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil && err != io.EOF {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
 	}
 	mailbox := strings.TrimSpace(req.Mailbox)
 	if mailbox == "" {

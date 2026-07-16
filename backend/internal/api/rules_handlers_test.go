@@ -301,3 +301,170 @@ func rulesTestRule(name string) rules.Rule {
 		Actions: []rules.Action{{Type: "archive"}},
 	}
 }
+
+// setupRulesRunTest wires up a test server with a fake IMAP client injected
+// so POST /api/rules/run resolves to it instead of building a real
+// imapadapter.APIClient. Mirrors the setup in
+// TestRulesRun_AppliesMatchingRuleAndSkipsNonMatching.
+func setupRulesRunTest(t *testing.T, overviews []imapadapter.Overview, bodies map[int]string) (*Server, *fakeMailClient, string) {
+	t.Helper()
+	srv := newTestServer(t)
+	srv.imapConfigKeyPath = filepath.Join(t.TempDir(), "imap-config.key")
+	all, _ := srv.users.List()
+	userID := all[0].ID
+
+	if err := writeIMAPConfigPayload(srv.userIMAPConfigPath(userID), srv.imapConfigKeyPath, imapConfigPayload{
+		Host: "imap.example.com", Port: 993, Username: "alice@example.com", Password: "pw",
+		Mailbox: "INBOX", UpdatedAt: "test",
+	}); err != nil {
+		t.Fatalf("writeIMAPConfigPayload: %v", err)
+	}
+	fake := &fakeMailClient{overviews: overviews, bodies: bodies}
+	srv.userMu.Lock()
+	srv.userMail[userID] = &serverMailEntry{client: fake, updatedAt: "test"}
+	srv.userMu.Unlock()
+	return srv, fake, userID
+}
+
+// TestRulesRun_FetchesBodyWhenRuleNeedsIt guards against a regression where
+// a body-field condition is never actually exercised end-to-end: it seeds a
+// rule whose only condition is on Field "body", confirms the handler fetched
+// message bodies (fake.bodiesCalls), that the fetched body content genuinely
+// reached rules.EvalInput.Body, and that the match/no-match outcome tracked
+// the fetched content rather than some other field.
+func TestRulesRun_FetchesBodyWhenRuleNeedsIt(t *testing.T) {
+	srv, fake, userID := setupRulesRunTest(t,
+		[]imapadapter.Overview{
+			{MessageID: "1", UID: 1, Sender: "a@example.com", Subject: "s1"},
+			{MessageID: "2", UID: 2, Sender: "b@example.com", Subject: "s2"},
+		},
+		map[int]string{
+			1: "contains the secret keyword",
+			2: "nothing interesting here",
+		},
+	)
+
+	store, err := srv.userRulesStore(userID)
+	if err != nil {
+		t.Fatalf("userRulesStore: %v", err)
+	}
+	if _, err := store.Upsert(rules.Rule{
+		Name:    "body has secret",
+		Enabled: true,
+		Match: rules.MatchGroup{
+			Op:         "allof",
+			Conditions: []rules.Condition{{Field: "body", Comparator: "contains", Value: "secret"}},
+		},
+		Actions: []rules.Action{{Type: "archive"}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/rules/run", bytes.NewReader([]byte(`{"mailbox":"INBOX"}`)))
+	authRequest(srv, req)
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	if fake.bodiesCalls != 1 {
+		t.Fatalf("expected exactly one body fetch, got %d", fake.bodiesCalls)
+	}
+	if len(fake.lastBodyUIDs) != 2 {
+		t.Fatalf("expected bodies fetched for both UIDs, got %+v", fake.lastBodyUIDs)
+	}
+
+	var result rulesRunResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	// Only UID 1's fetched body contains "secret"; UID 2's does not. If
+	// EvalInput.Body weren't genuinely populated from the fetched content,
+	// this would either match 0 or match both.
+	if result.Scanned != 2 || result.Matched != 1 || result.Applied != 1 || result.Failed != 0 {
+		t.Fatalf("result = %+v, want scanned=2 matched=1 applied=1 failed=0", result)
+	}
+}
+
+// TestRulesRun_DisabledRuleExcludedFromActionsAndBodyFetch seeds one disabled
+// rule with a body-field condition alongside one enabled from-field rule. It
+// guards two things at once: (1) the handler's own Enabled pre-filter (around
+// rules_handlers.go's activeRules loop) must keep the disabled rule's actions
+// from ever being applied, and (2) needsBody must be computed only from
+// enabled rules, so the disabled rule's body condition must NOT trigger a
+// body fetch.
+func TestRulesRun_DisabledRuleExcludedFromActionsAndBodyFetch(t *testing.T) {
+	srv, fake, userID := setupRulesRunTest(t,
+		[]imapadapter.Overview{
+			{MessageID: "1", UID: 1, Sender: "billing@acme.com", Subject: "Invoice"},
+			{MessageID: "2", UID: 2, Sender: "someone@example.com", Subject: "Hello"},
+		},
+		nil,
+	)
+
+	store, err := srv.userRulesStore(userID)
+	if err != nil {
+		t.Fatalf("userRulesStore: %v", err)
+	}
+	// Disabled rule: matches every message on body content and would apply a
+	// keyword action (observable via fake.appliedLabels) if it were ever
+	// (wrongly) evaluated.
+	if _, err := store.Upsert(rules.Rule{
+		Name:    "disabled body rule",
+		Enabled: false,
+		Match: rules.MatchGroup{
+			Op:         "allof",
+			Conditions: []rules.Condition{{Field: "body", Comparator: "contains", Value: ""}},
+		},
+		Actions: []rules.Action{{Type: "keyword", Value: "ShouldNotApply"}},
+	}); err != nil {
+		t.Fatalf("Upsert disabled rule: %v", err)
+	}
+	// Enabled rule: only matches the acme sender, no body condition.
+	if _, err := store.Upsert(rulesTestRule("archive acme")); err != nil {
+		t.Fatalf("Upsert enabled rule: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/rules/run", bytes.NewReader([]byte(`{"mailbox":"INBOX"}`)))
+	authRequest(srv, req)
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	if fake.bodiesCalls != 0 {
+		t.Fatalf("expected no body fetch (disabled rule's body condition must not count), got %d calls", fake.bodiesCalls)
+	}
+	if len(fake.appliedLabels) != 0 {
+		t.Fatalf("expected no label actions applied, got %+v", fake.appliedLabels)
+	}
+
+	var result rulesRunResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	// Only the acme-sender message matches the enabled rule; if the disabled
+	// rule's allof-with-empty-value body condition were evaluated, both
+	// messages would match instead.
+	if result.Scanned != 2 || result.Matched != 1 || result.Applied != 1 || result.Failed != 0 {
+		t.Fatalf("result = %+v, want scanned=2 matched=1 applied=1 failed=0", result)
+	}
+}
+
+// TestRulesRun_MalformedJSONReturns400 guards against the request body
+// decode error at handleRulesRun being silently discarded: malformed JSON
+// must be reported as 400, matching every other JSON-decoding call site in
+// this file.
+func TestRulesRun_MalformedJSONReturns400(t *testing.T) {
+	srv, _, _ := setupRulesRunTest(t, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/rules/run", bytes.NewReader([]byte(`{"mailbox": `)))
+	authRequest(srv, req)
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed JSON, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
