@@ -10,6 +10,7 @@ import {
   exportContactsUrl,
   importContacts,
   listContacts,
+  setContactAsSelf,
   updateContact,
   uploadContactPhoto,
   IM_SERVICES,
@@ -431,6 +432,23 @@ export function ContactsPage() {
     }
   }
 
+  async function toggleSelfContact(contact: Contact) {
+    setBusyId(contact.uid);
+    setStatus("");
+    try {
+      const updated = await setContactAsSelf(contact.uid, !contact.isSelf);
+      setStatus(updated.isSelf ? `${updated.fn} set as your contact card.` : `${updated.fn} removed as your contact card.`);
+      const next = await loadContacts();
+      if (selectedContact?.uid === updated.uid) {
+        setSelectedContact(next.find((c) => c.uid === updated.uid) ?? null);
+      }
+    } catch (error: unknown) {
+      setStatus(`Failed to update contact card: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setBusyId("");
+    }
+  }
+
   async function deleteBulk() {
     if (!window.confirm(`Delete ${selectedUids.length} contact${selectedUids.length === 1 ? "" : "s"}?`)) {
       return;
@@ -707,6 +725,7 @@ export function ContactsPage() {
                               <ContactAvatar contact={contact} />
                               <div className="contacts-identity-text">
                                 <span className="contacts-name">{contact.fn}</span>
+                                {contact.isSelf ? <span className="contacts-sub">Your contact card</span> : null}
                                 {contact.org ? <span className="contacts-sub">{contact.org}</span> : null}
                               </div>
                               <span className="contacts-row-chevron" aria-hidden="true">
@@ -1218,9 +1237,21 @@ export function ContactsPage() {
                       {[selectedContact.title, selectedContact.org, selectedContact.department].filter(Boolean).join(" · ")}
                     </p>
                   ) : null}
+                  {selectedContact.isSelf ? (
+                    <p className="contacts-sub" style={{ margin: "2px 0 0" }}>
+                      Your contact card — shared when someone scans your PGP QR code
+                    </p>
+                  ) : null}
                 </div>
               </div>
               <div className="contact-details-actions">
+                <button
+                  type="button"
+                  onClick={() => void toggleSelfContact(selectedContact)}
+                  disabled={busyId === selectedContact.uid}
+                >
+                  {selectedContact.isSelf ? "Remove as my card" : "Use as my card"}
+                </button>
                 <button
                   type="button"
                   onClick={() => {

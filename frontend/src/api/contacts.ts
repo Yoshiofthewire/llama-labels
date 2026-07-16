@@ -94,6 +94,7 @@ export type Contact = {
   birthday?: string;
   mergedUIDs?: string[];
   mergedInto?: string;
+  isSelf?: boolean;
 } & ContactExtendedFields;
 
 export type ContactInput = {
@@ -132,6 +133,10 @@ export function updateContact(uid: string, input: ContactInput): Promise<Contact
 
 export function deleteContact(uid: string): Promise<{ ok: boolean; removed: boolean }> {
   return deleteJSON<{ ok: boolean; removed: boolean }>(`/api/contacts/${encodeURIComponent(uid)}`);
+}
+
+export function setContactAsSelf(uid: string, self: boolean): Promise<Contact> {
+  return postJSON<Contact>(`/api/contacts/${encodeURIComponent(uid)}/self`, { self });
 }
 
 export type DedupeMerge = {
