@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 
+	imapadapter "llama-lab/backend/internal/adapters/imap"
 	"llama-lab/backend/internal/rules"
 )
 
@@ -237,4 +239,144 @@ func (s *Server) handleRuleSieve(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// rulesRunResult is the wire response of POST /api/rules/run.
+type rulesRunResult struct {
+	Scanned int `json:"scanned"`
+	Matched int `json:"matched"`
+	Applied int `json:"applied"`
+	Failed  int `json:"failed"`
+}
+
+// handleRulesRun is the manual "run rules now" backfill: it lists the
+// target folder's messages live (independent of the poller's
+// checkpoint/processed-state machinery — a deliberate re-apply regardless
+// of AI-processed status), evaluates every enabled rule against each, and
+// applies matched actions. Bodies are fetched only when at least one
+// enabled rule has a body-field condition.
+func (s *Server) handleRulesRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	mailClient, err := s.mailFor(r)
+	if err != nil {
+		if errors.Is(err, errIMAPNotConfigured) {
+			http.Error(w, "imap configuration is required", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "imap client is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	store, err := s.rulesFor(r)
+	if err != nil {
+		http.Error(w, "failed to open rules store", http.StatusInternalServerError)
+		return
+	}
+
+	var req struct {
+		Mailbox string `json:"mailbox"`
+		Limit   int    `json:"limit"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+	}
+	mailbox := strings.TrimSpace(req.Mailbox)
+	if mailbox == "" {
+		mailbox = "INBOX"
+	}
+	limit := req.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+
+	var activeRules []rules.Rule
+	needsBody := false
+	for _, rl := range store.List() {
+		if !rl.Enabled {
+			continue
+		}
+		activeRules = append(activeRules, rl)
+		if conditionsUseBody(rl.Match) {
+			needsBody = true
+		}
+	}
+
+	overviews, err := mailClient.ListOverviews(r.Context(), mailbox, limit)
+	if err != nil {
+		http.Error(w, "failed to list messages", http.StatusBadGateway)
+		return
+	}
+
+	var bodies map[int]imapadapter.MessageContent
+	if needsBody && len(overviews) > 0 {
+		uids := make([]int, 0, len(overviews))
+		for _, ov := range overviews {
+			uids = append(uids, ov.UID)
+		}
+		bodies, err = mailClient.GetMessageBodies(r.Context(), mailbox, uids)
+		if err != nil {
+			http.Error(w, "failed to fetch message bodies", http.StatusBadGateway)
+			return
+		}
+	}
+
+	result := rulesRunResult{Scanned: len(overviews)}
+	for _, ov := range overviews {
+		body := ""
+		if bodies != nil {
+			body = bodies[ov.UID].Body
+		}
+		input := rules.EvalInput{
+			UID:       ov.UID,
+			MessageID: ov.MessageID,
+			From:      ov.Sender,
+			To:        ov.SentTo,
+			CC:        ov.CC,
+			BCC:       ov.BCC,
+			Subject:   ov.Subject,
+			Body:      body,
+			Keywords:  ov.Keywords,
+			Folder:    mailbox,
+		}
+		outcome := rules.Evaluate(input, activeRules)
+		if len(outcome.Matched) == 0 {
+			continue
+		}
+		result.Matched++
+		actionResults := rules.ApplyOutcome(r.Context(), mailClient, mailbox, input, outcome)
+		failed := false
+		for _, ar := range actionResults {
+			if ar.Err != nil {
+				failed = true
+				break
+			}
+		}
+		if failed {
+			result.Failed++
+		} else {
+			result.Applied++
+		}
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// conditionsUseBody reports whether g (or any nested Condition.Group)
+// contains a body-field condition, so handleRulesRun can skip the body
+// fetch entirely when no active rule needs it.
+func conditionsUseBody(g rules.MatchGroup) bool {
+	for _, c := range g.Conditions {
+		if c.Group != nil {
+			if conditionsUseBody(*c.Group) {
+				return true
+			}
+			continue
+		}
+		if strings.EqualFold(c.Field, "body") {
+			return true
+		}
+	}
+	return false
 }

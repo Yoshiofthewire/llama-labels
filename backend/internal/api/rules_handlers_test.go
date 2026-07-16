@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
+	imapadapter "llama-lab/backend/internal/adapters/imap"
 	"llama-lab/backend/internal/rules"
 )
 
@@ -230,6 +232,57 @@ func TestRulesUpdatePreservesOrder(t *testing.T) {
 	}
 	if list[1].Name != "second updated" || list[1].Order != 1 {
 		t.Fatalf("expected second rule updated in place at Order 1, got %+v", list[1])
+	}
+}
+
+func TestRulesRun_AppliesMatchingRuleAndSkipsNonMatching(t *testing.T) {
+	srv := newTestServer(t)
+	srv.imapConfigKeyPath = filepath.Join(t.TempDir(), "imap-config.key")
+	all, _ := srv.users.List()
+	userID := all[0].ID
+
+	store, err := srv.userRulesStore(userID)
+	if err != nil {
+		t.Fatalf("userRulesStore: %v", err)
+	}
+	if _, err := store.Upsert(rulesTestRule("archive acme")); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	// mailFor/userMailClient only reuses a cached client when the cached
+	// updatedAt matches what's on disk — write a real (if inert) IMAP
+	// config payload stamped with the same updatedAt used below so the
+	// handler's mailFor resolves to the injected fake instead of building a
+	// real imapadapter.APIClient.
+	if err := writeIMAPConfigPayload(srv.userIMAPConfigPath(userID), srv.imapConfigKeyPath, imapConfigPayload{
+		Host: "imap.example.com", Port: 993, Username: "alice@example.com", Password: "pw",
+		Mailbox: "INBOX", UpdatedAt: "test",
+	}); err != nil {
+		t.Fatalf("writeIMAPConfigPayload: %v", err)
+	}
+	fake := &fakeMailClient{
+		overviews: []imapadapter.Overview{
+			{MessageID: "1", UID: 1, Sender: "billing@acme.com", Subject: "Invoice"},
+			{MessageID: "2", UID: 2, Sender: "someone@example.com", Subject: "Hello"},
+		},
+	}
+	srv.userMu.Lock()
+	srv.userMail[userID] = &serverMailEntry{client: fake, updatedAt: "test"}
+	srv.userMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/rules/run", bytes.NewReader([]byte(`{"mailbox":"INBOX"}`)))
+	authRequest(srv, req)
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var result rulesRunResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if result.Scanned != 2 || result.Matched != 1 || result.Applied != 1 || result.Failed != 0 {
+		t.Fatalf("result = %+v, want scanned=2 matched=1 applied=1 failed=0", result)
 	}
 }
 
