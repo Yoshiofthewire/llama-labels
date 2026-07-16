@@ -169,6 +169,70 @@ func TestRulesReorder(t *testing.T) {
 	}
 }
 
+// TestRulesUpdatePreservesOrder guards against a regression where PUT
+// /api/rules/{id} zeroed out a rule's Order whenever the request payload
+// omitted it (Go zero-values a missing "order" field to 0, and Store.Upsert
+// only defaults Order on create, not update). With a single rule in the
+// store the rule's Order is already 0, so that scenario alone wouldn't catch
+// the bug: this test seeds two rules with distinct, non-zero-at-index Order
+// values and updates the second one with a payload that has no "order" key
+// at all, then asserts both rules' Order/relative ordering survive.
+func TestRulesUpdatePreservesOrder(t *testing.T) {
+	srv := newTestServer(t)
+	all, _ := srv.users.List()
+	store, err := srv.userRulesStore(all[0].ID)
+	if err != nil {
+		t.Fatalf("userRulesStore: %v", err)
+	}
+	first, err := store.Upsert(rulesTestRule("first"))
+	if err != nil {
+		t.Fatalf("seed first rule: %v", err)
+	}
+	second, err := store.Upsert(rulesTestRule("second"))
+	if err != nil {
+		t.Fatalf("seed second rule: %v", err)
+	}
+	if first.Order != 0 || second.Order != 1 {
+		t.Fatalf("expected seeded orders [0, 1], got first=%d second=%d", first.Order, second.Order)
+	}
+
+	// Deliberately omit "order" (and "scope"), as a partial edit form would.
+	updateBody, _ := json.Marshal(map[string]any{
+		"name":    "second updated",
+		"enabled": true,
+		"match":   ruleToPayload(second).Match,
+		"actions": ruleToPayload(second).Actions,
+	})
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/rules/"+second.ID, bytes.NewReader(updateBody))
+	authRequest(srv, updateReq)
+	updateRec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body=%s", updateRec.Code, updateRec.Body.String())
+	}
+	var updated rulePayload
+	if err := json.Unmarshal(updateRec.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updated.Name != "second updated" {
+		t.Fatalf("update did not apply name change, got %+v", updated)
+	}
+	if updated.Order != 1 {
+		t.Fatalf("expected updated rule's Order to remain 1, got %d", updated.Order)
+	}
+
+	list := store.List()
+	if len(list) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(list))
+	}
+	if list[0].Name != "first" || list[0].Order != 0 {
+		t.Fatalf("expected first rule unaffected at Order 0, got %+v", list[0])
+	}
+	if list[1].Name != "second updated" || list[1].Order != 1 {
+		t.Fatalf("expected second rule updated in place at Order 1, got %+v", list[1])
+	}
+}
+
 // rulesTestRule builds a minimal enabled rule matching From contains "acme"
 // with an archive action, for tests that only need a fixture rule to exist.
 // Task 7 adds a second test function to this file that also uses this

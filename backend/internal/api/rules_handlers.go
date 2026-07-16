@@ -134,6 +134,13 @@ func (s *Server) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 		}
 		payload.ID = existing.ID
 		payload.Name = name
+		// Order and Scope aren't part of the editable payload for this
+		// endpoint (Order is managed by /reorder; Scope isn't settable via
+		// the GUI editor) — base on existing so a partial update (e.g. a
+		// client that only sends name/match/actions) doesn't silently zero
+		// them out via Go's int/struct zero values.
+		payload.Order = existing.Order
+		payload.Scope = existing.Scope
 		updated, err := store.Upsert(ruleFromPayload(payload))
 		if err != nil {
 			http.Error(w, "failed to update rule", http.StatusInternalServerError)
