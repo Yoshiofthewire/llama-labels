@@ -8,14 +8,14 @@ import (
 
 // allowedCapabilities is the fixed set of "require" capability strings
 // ParseRuleText (Task 4) accepts. Anything else fails loud (with a line
-// number) — llama-labels' Sieve subset is hand-rolled precisely so
+// number) — KyMail's Sieve subset is hand-rolled precisely so
 // unsupported capabilities are never silently ignored.
 var allowedCapabilities = map[string]bool{
 	"fileinto":   true, // fileinto (RFC 5228 section 4.1)
 	"body":       true, // body test (RFC 5173)
 	"regex":      true, // :regex match comparator (RFC 3894)
 	"imap4flags": true, // addflag/removeflag/hasflag (RFC 5232)
-	"llamalabs":  true, // invented markread/archive/markspam actions
+	"kymail":     true, // invented markread/archive/markspam actions
 }
 
 // CompileRule renders one Rule as a Sieve-subset script: an optional
@@ -36,8 +36,8 @@ func CompileRule(r Rule) (string, error) {
 	if usesCapability(r, "imap4flags") {
 		caps = append(caps, "imap4flags")
 	}
-	if usesCapability(r, "llamalabs") {
-		caps = append(caps, "llamalabs")
+	if usesCapability(r, "kymail") {
+		caps = append(caps, "kymail")
 	}
 
 	var sb strings.Builder
@@ -84,7 +84,7 @@ func usesCapability(r Rule, capability string) bool {
 			}
 		}
 		return matchGroupUsesField(r.Match, "keyword")
-	case "llamalabs":
+	case "kymail":
 		for _, a := range r.Actions {
 			if a.Type == "read" || a.Type == "archive" || a.Type == "spam" {
 				return true

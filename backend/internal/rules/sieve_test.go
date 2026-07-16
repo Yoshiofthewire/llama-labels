@@ -74,7 +74,7 @@ func TestParseRuleText(t *testing.T) {
 		},
 		{
 			name:   "anyof with not and hasflag",
-			script: "require [\"llamalabs\", \"imap4flags\"];\nif anyof(not header :is [\"subject\"] \"spam\", hasflag :is \"VIP\") {\n    archive;\n    stop;\n}\n",
+			script: "require [\"kymail\", \"imap4flags\"];\nif anyof(not header :is [\"subject\"] \"spam\", hasflag :is \"VIP\") {\n    archive;\n    stop;\n}\n",
 			wantOp: "anyof",
 			wantConds: []wantCondition{
 				{negate: true, field: "subject", comparator: "is", value: "spam"},
@@ -340,7 +340,7 @@ func TestCompileRule(t *testing.T) {
 				}},
 				Actions: []Action{{Type: "archive"}, {Type: "stop"}},
 			},
-			want: "require [\"imap4flags\", \"llamalabs\"];\n\nif anyof(not header :is [\"subject\"] \"spam\", hasflag :is \"VIP\") {\n    archive;\n    stop;\n}\n",
+			want: "require [\"imap4flags\", \"kymail\"];\n\nif anyof(not header :is [\"subject\"] \"spam\", hasflag :is \"VIP\") {\n    archive;\n    stop;\n}\n",
 		},
 		{
 			name: "no actions renders keep",
@@ -371,7 +371,7 @@ func TestCompileRule(t *testing.T) {
 				Match:   MatchGroup{Op: "allof", Conditions: []Condition{{Field: "cc", Comparator: "exists"}}},
 				Actions: []Action{{Type: "read"}},
 			},
-			want: "require [\"llamalabs\"];\n\nif allof(exists [\"cc\"]) {\n    markread;\n}\n",
+			want: "require [\"kymail\"];\n\nif allof(exists [\"cc\"]) {\n    markread;\n}\n",
 		},
 		{
 			name: "markspam",
@@ -379,7 +379,7 @@ func TestCompileRule(t *testing.T) {
 				Match:   MatchGroup{Op: "allof", Conditions: []Condition{{Field: "bcc", Comparator: "matches", Value: "*@spam.example"}}},
 				Actions: []Action{{Type: "spam"}},
 			},
-			want: "require [\"llamalabs\"];\n\nif allof(header :matches [\"bcc\"] \"*@spam.example\") {\n    markspam;\n}\n",
+			want: "require [\"kymail\"];\n\nif allof(header :matches [\"bcc\"] \"*@spam.example\") {\n    markspam;\n}\n",
 		},
 		{
 			// Covers the Condition.Group recursion path: a nested anyof group
