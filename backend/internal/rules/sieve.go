@@ -363,8 +363,11 @@ func normalizeField(f string) string {
 // treats as header/address fields (its "from", "to", "cc", "bcc", "subject"
 // case). "body" and "keyword" are deliberately excluded: compileLeafCondition
 // special-cases those two into a completely different Sieve test (body /
-// hasflag), so a header/address test naming them would silently compile to
-// the wrong test with no error. See sieve.go:166-181 (compileLeafCondition).
+// hasflag), so a header/address or exists test naming them would silently
+// compile to the wrong test with no error. See sieve.go:166-181
+// (compileLeafCondition). Used by both the header/address branch and the
+// exists branch of parseTest, since both go through fieldsToCondition and
+// are subject to the identical compileLeafCondition re-dispatch hazard.
 var validHeaderAddressFields = map[string]bool{
 	"from":    true,
 	"to":      true,
@@ -464,6 +467,11 @@ func (p *sieveParser) parseTest() (Condition, error) {
 		}
 		if len(fields) == 0 {
 			return Condition{}, fmt.Errorf("line %d: exists test requires at least one field", t.line)
+		}
+		for _, f := range fields {
+			if !validHeaderAddressFields[normalizeField(f)] {
+				return Condition{}, fmt.Errorf("line %d: unsupported exists field %q", t.line, f)
+			}
 		}
 		return fieldsToCondition(fields, "exists", ""), nil
 

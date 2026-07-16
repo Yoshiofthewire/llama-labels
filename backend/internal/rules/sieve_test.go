@@ -182,6 +182,24 @@ func TestParseRuleText_Errors(t *testing.T) {
 			script:     "if allof(header :is [\"keyword\"] \"urgent\") {\n  keep;\n}\n",
 			wantSubstr: "unsupported header/address field \"keyword\"",
 		},
+		{
+			// Regression test for the sibling of Issue 1: the exists test
+			// path had the identical hazard as header/address. Before this
+			// fix, exists ["body"] parsed successfully to
+			// Condition{Field:"body", Comparator:"exists", Value:""}, which
+			// CompileRule then silently re-emits as `body :is ""` — an
+			// always-near-true body-contains-empty-string test, not an
+			// existence check — a completely different Sieve test with no
+			// error anywhere.
+			name:       "exists test with body field name is rejected",
+			script:     "if exists [\"body\"] {\n  keep;\n}\n",
+			wantSubstr: "unsupported exists field \"body\"",
+		},
+		{
+			name:       "exists test with keyword field name is rejected",
+			script:     "if exists [\"keyword\"] {\n  keep;\n}\n",
+			wantSubstr: "unsupported exists field \"keyword\"",
+		},
 	}
 
 	for _, tc := range tests {
