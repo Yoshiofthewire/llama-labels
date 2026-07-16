@@ -51,6 +51,15 @@ type InboxActionResponse = {
   failed: Array<{ messageId: string; error: string }>;
 };
 
+// KeywordActionResponse is the same /api/inbox/actions response shape used
+// for the "label"/"unlabel" actions — a subset of InboxActionResponse since
+// those aren't part of the InboxAction union. handleInboxActions always
+// returns HTTP 200 and signals per-message failure via `failed`, so callers
+// must check it explicitly rather than treating a 200 as success.
+type KeywordActionResponse = {
+  failed: Array<{ messageId: string; error: string }>;
+};
+
 type SortKey = "time" | "subject" | "sender";
 type SortDirection = "asc" | "desc";
 const EMAILS_PER_PAGE = 20;
@@ -654,13 +663,20 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
     }
   }
 
-  function updateSelectedKeywords(next: string[]) {
-    setSelected((current) => (current ? { ...current, keywords: next } : current));
+  // updateSelectedKeywords patches the keywords for one specific message
+  // (messageId, captured by the caller when its in-flight request started)
+  // into both selected and byTab. It takes messageId explicitly — rather
+  // than trusting whatever `selected` happens to be when this runs — so
+  // that if the user opens a different email while an add/remove request
+  // for the first one is still in flight, the late-arriving response can't
+  // stamp its keyword update onto the now-selected message.
+  function updateSelectedKeywords(messageId: string, next: string[]) {
+    setSelected((current) => (current && current.messageId === messageId ? { ...current, keywords: next } : current));
     setByTab((current) => {
       const updated: Record<string, InboxEmail[]> = {};
       Object.entries(current).forEach(([tab, items]) => {
         updated[tab] = items.map((item) =>
-          selected && item.messageId === selected.messageId ? { ...item, keywords: next } : item
+          item.messageId === messageId ? { ...item, keywords: next } : item
         );
       });
       return updated;
@@ -674,10 +690,21 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
       setKeywordDraft("");
       return;
     }
+    const messageId = selected.messageId;
+    const nextKeywords = [...(selected.keywords ?? []), keyword];
     try {
-      await postJSON("/api/inbox/actions", { action: "label", messageIds: [selected.messageId], keyword, mailbox });
+      const response = await postJSON<KeywordActionResponse>("/api/inbox/actions", {
+        action: "label",
+        messageIds: [messageId],
+        keyword,
+        mailbox
+      });
+      if (response.failed.length > 0) {
+        const first = response.failed[0];
+        throw new Error(first?.error || "failed to add keyword");
+      }
       setKeywordDraft("");
-      updateSelectedKeywords([...(selected.keywords ?? []), keyword]);
+      updateSelectedKeywords(messageId, nextKeywords);
     } catch (e) {
       setActionError(toErrorMessage(e, "failed to add keyword"));
     }
@@ -685,9 +712,20 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
 
   async function removeKeywordFromSelected(keyword: string) {
     if (!selected) return;
+    const messageId = selected.messageId;
+    const nextKeywords = (selected.keywords ?? []).filter((k) => k !== keyword);
     try {
-      await postJSON("/api/inbox/actions", { action: "unlabel", messageIds: [selected.messageId], keyword, mailbox });
-      updateSelectedKeywords((selected.keywords ?? []).filter((k) => k !== keyword));
+      const response = await postJSON<KeywordActionResponse>("/api/inbox/actions", {
+        action: "unlabel",
+        messageIds: [messageId],
+        keyword,
+        mailbox
+      });
+      if (response.failed.length > 0) {
+        const first = response.failed[0];
+        throw new Error(first?.error || "failed to remove keyword");
+      }
+      updateSelectedKeywords(messageId, nextKeywords);
     } catch (e) {
       setActionError(toErrorMessage(e, "failed to remove keyword"));
     }

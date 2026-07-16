@@ -2791,6 +2791,7 @@ func (s *Server) handleMailSearch(w http.ResponseWriter, r *http.Request) {
 			CC:             overview.CC,
 			BCC:            overview.BCC,
 			Label:          label,
+			Keywords:       overview.Keywords,
 			Status:         overview.Status,
 			AtUTC:          overview.AtUTC,
 			HasAttachments: false,

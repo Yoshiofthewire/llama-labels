@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	imapadapter "llama-lab/backend/internal/adapters/imap"
@@ -24,6 +26,10 @@ type fakeMailClient struct {
 	overviews     []imapadapter.Overview
 	overviewsErr  error
 	overviewCalls int
+
+	searchResults []imapadapter.Overview
+	searchErr     error
+	searchCalls   int
 
 	bodies             map[int]string
 	bodyHasAttachments map[int]bool
@@ -62,6 +68,13 @@ func (f *fakeMailClient) ListOverviews(_ context.Context, _ string, _ int) ([]im
 }
 
 func (f *fakeMailClient) SearchMessages(_ context.Context, _ string, _ string, _ string, _ int) ([]imapadapter.Overview, error) {
+	f.searchCalls++
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
+	if f.searchResults != nil {
+		return f.searchResults, nil
+	}
 	return []imapadapter.Overview{}, nil
 }
 
@@ -639,6 +652,67 @@ func TestServeInbox_KeywordsPopulatedOnAllPaths(t *testing.T) {
 			t.Fatalf("expected changeType=updated, got %+v", e)
 		}
 	})
+}
+
+// TestHandleMailSearch_PopulatesKeywords guards against a regression where
+// GET /api/mail/search built its inboxEmail response literal independently
+// of serveInbox's bucket() closure and computed a Label from
+// overview.Keywords without ever also copying Keywords onto the response —
+// so a message found via search never showed its keyword chips even though
+// the same message browsed normally would.
+func TestHandleMailSearch_PopulatesKeywords(t *testing.T) {
+	srv := newTestServer(t)
+	srv.imapConfigKeyPath = filepath.Join(t.TempDir(), "imap-config.key")
+	all, err := srv.users.List()
+	if err != nil || len(all) == 0 {
+		t.Fatalf("no test user available: %v", err)
+	}
+	userID := all[0].ID
+
+	srv.mu.Lock()
+	srv.cfg.Labels.Allowlist = []string{"Work"}
+	srv.mu.Unlock()
+
+	if err := writeIMAPConfigPayload(srv.userIMAPConfigPath(userID), srv.imapConfigKeyPath, imapConfigPayload{
+		Host: "imap.example.com", Port: 993, Username: "alice@example.com", Password: "pw",
+		Mailbox: "INBOX", UpdatedAt: "test",
+	}); err != nil {
+		t.Fatalf("writeIMAPConfigPayload: %v", err)
+	}
+	fake := &fakeMailClient{searchResults: []imapadapter.Overview{
+		{MessageID: "1", Subject: "a", Sender: "a@example.com", Status: "unread", AtUTC: "2026-01-01T00:00:00Z", Keywords: []string{"Work"}},
+	}}
+	srv.userMu.Lock()
+	srv.userMail[userID] = &serverMailEntry{client: fake, updatedAt: "test"}
+	srv.userMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/mail/search?q=hello", nil)
+	authRequest(srv, req)
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if fake.searchCalls != 1 {
+		t.Fatalf("expected exactly one SearchMessages call, got %d", fake.searchCalls)
+	}
+
+	var resp struct {
+		Results []inboxEmail `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected 1 search result, got %+v", resp.Results)
+	}
+	got := resp.Results[0]
+	if len(got.Keywords) != 1 || got.Keywords[0] != "Work" {
+		t.Fatalf("expected Keywords=[Work] on search result, got %+v", got)
+	}
+	if got.Label != "Work" {
+		t.Fatalf("expected Label=Work on search result, got %+v", got)
+	}
 }
 
 func TestFakeMailClient_RemoveLabelRecordsCall(t *testing.T) {
