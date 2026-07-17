@@ -15,6 +15,7 @@ import {
   runRulesNow,
   updateRule
 } from "../api/rules";
+import { RulesHelpModal } from "../components/RulesHelpModal";
 
 const FIELD_OPTIONS = ["from", "to", "cc", "bcc", "subject", "body", "keyword"] as const;
 const COMPARATOR_OPTIONS = ["contains", "is", "matches", "regex"] as const;
@@ -92,6 +93,7 @@ export function RulesPage() {
   const [runBusy, setRunBusy] = useState(false);
   const [runError, setRunError] = useState("");
   const [runResult, setRunResult] = useState<RunRulesResult | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   async function loadRules() {
     setLoading(true);
@@ -284,7 +286,12 @@ export function RulesPage() {
       <header className="security-header">
         <h2>Filter Rules</h2>
         <p>Automatically tag, move, or act on incoming mail — rules run on every new message and can also be run on demand against existing mail.</p>
+        <button type="button" className="contacts-action" onClick={() => setHelpOpen(true)}>
+          How to write rules
+        </button>
       </header>
+
+      <RulesHelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
 
       {error ? <p className="security-muted">{error}</p> : null}
 

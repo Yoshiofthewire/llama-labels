@@ -3204,6 +3204,99 @@ pre {
   margin: 0;
 }
 
+.rules-help-backdrop {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  border: none;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  color: inherit;
+  background: var(--modal-overlay);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 2600;
+}
+
+.rules-help-backdrop:not([open]) {
+  display: none;
+}
+
+.rules-help-window {
+  width: min(760px, 94vw);
+  max-height: 88vh;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--ink-strong);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 14px 40px var(--modal-shadow);
+  overflow: auto;
+}
+
+.rules-help-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rules-help-head h3 {
+  margin: 0;
+}
+
+.rules-help-body h4 {
+  margin: 1em 0 0.4em;
+}
+
+.rules-help-body p {
+  margin: 0.4em 0;
+}
+
+.rules-help-note {
+  color: color-mix(in srgb, var(--ink) 80%, var(--ink-strong));
+  font-size: 0.9em;
+}
+
+.rules-help-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5em 0 1em;
+}
+
+.rules-help-table th,
+.rules-help-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.92em;
+}
+
+.rules-help-code {
+  background: color-mix(in srgb, var(--panel) 90%, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 0.85em;
+  white-space: pre;
+}
+
+.rules-help-links {
+  margin: 0.4em 0;
+  padding-left: 1.2em;
+}
+
+.rules-help-links li {
+  margin: 0.3em 0;
+}
+
 .contact-picker-search {
   width: 100%;
   padding: 8px;
@@ -3574,6 +3667,19 @@ pre {
   }
 
   .contact-picker-window {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .rules-help-backdrop {
+    padding: 0;
+  }
+
+  .rules-help-window {
     width: 100vw;
     height: 100dvh;
     max-height: 100dvh;
