@@ -88,6 +88,7 @@ type Server struct {
 	baseURLFallbackWarn  sync.Once
 	nativePushDispatcher *processor.NativePushDispatcher
 	pickupStore          *pgpmail.PickupStore
+	poller               *processor.Poller
 
 	// Per-user resources, lazily created and cached. userMu also guards the
 	// subscriberID -> userID index used by the unauthenticated native
@@ -142,6 +143,13 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 	}
 }
 
+// SetPoller wires the background mail poller into the server so admin
+// endpoints (e.g. a manual "poll now" trigger) can reach it. Set once at
+// startup, alongside the poller's own construction in app.go.
+func (s *Server) SetPoller(p *processor.Poller) {
+	s.poller = p
+}
+
 // routes builds the API's route table. Split out from Run so tests can
 // dispatch through the exact same registration (middleware included)
 // instead of calling handlers directly and assuming the wiring matches.
@@ -149,6 +157,7 @@ func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("POST /api/health/repair", s.withAdmin(s.handleRepair))
+	mux.HandleFunc("POST /api/admin/mail/poll-now", s.withAdmin(s.handlePollNow))
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/auth/mfa/totp", s.handleMFATOTP)
 	mux.HandleFunc("POST /api/auth/mfa/recovery-code", s.handleMFARecoveryCode)
@@ -1227,6 +1236,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.cfg = next
 		s.mu.Unlock()
+		if llamaChanged {
+			llama.ResetWarmupState()
+		}
 		if s.onConfigUpdated != nil {
 			s.onConfigUpdated(next)
 		}
@@ -2380,6 +2392,8 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		for i, msg := range unread {
 			if msg.PGPEncryptedPayload != "" {
 				unread[i] = s.decryptPGPUnreadMessage(userID, msg)
+			} else if msg.PGPSignaturePayload != "" {
+				unread[i] = s.verifySignedOnlyUnreadMessage(userID, msg)
 			}
 		}
 
@@ -2454,6 +2468,8 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		for uid, c := range contents {
 			if c.PGPEncryptedPayload != "" {
 				contents[uid] = s.decryptPGPMessageContent(userID, c)
+			} else if c.PGPSignaturePayload != "" {
+				contents[uid] = s.verifySignedOnlyMessageContent(userID, c)
 			}
 		}
 		// Attach the freshly fetched bodies back onto the cache (metadata
@@ -2965,6 +2981,19 @@ func (s *Server) handleRepair(w http.ResponseWriter, r *http.Request) {
 	s.logger.Error("manual repair requested")
 	scheduleContainerRestart(s.logger, "manual repair", 250*time.Millisecond)
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "restart requested"})
+}
+
+// handlePollNow forces an immediate mail poll tick instead of waiting for
+// the poller's regular interval, for admins who want to check "is new mail
+// here yet" without the usual delay.
+func (s *Server) handlePollNow(w http.ResponseWriter, r *http.Request) {
+	if s.poller == nil {
+		http.Error(w, "poller not available", http.StatusServiceUnavailable)
+		return
+	}
+	s.logger.Info("manual mail poll requested")
+	s.poller.TriggerNow()
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {

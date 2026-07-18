@@ -134,3 +134,134 @@ func TestDecryptPGPMessageContentNoIdentityConfigured(t *testing.T) {
 		t.Fatal("expected a decrypt error when no pgp identity is configured")
 	}
 }
+
+// extractArmoredDetachedSignature is a test-only helper that pulls the
+// armored "-----BEGIN PGP SIGNATURE-----...-----END PGP SIGNATURE-----" block
+// out of a full multipart/signed envelope (as pgpmail.SignMIME produces),
+// mirroring pgpDetectSignature's content-sniffing technique.
+func extractArmoredDetachedSignature(t *testing.T, signed []byte) string {
+	t.Helper()
+	s := string(signed)
+	start := strings.Index(s, "-----BEGIN PGP SIGNATURE-----")
+	if start == -1 {
+		t.Fatal("expected an armored signature block in the signed envelope")
+	}
+	end := strings.Index(s[start:], "-----END PGP SIGNATURE-----") + len("-----END PGP SIGNATURE-----")
+	return s[start : start+end]
+}
+
+func TestVerifySignedOnlyMessageContentRoundTrip(t *testing.T) {
+	srv := newTestServer(t)
+	all, err := srv.users.List()
+	if err != nil || len(all) == 0 {
+		t.Fatalf("no test user available: %v", err)
+	}
+	userID := all[0].ID
+
+	sender, err := pgpmail.GenerateIdentity("Sender", "sender@example.com")
+	if err != nil {
+		t.Fatalf("GenerateIdentity: %v", err)
+	}
+	contactsStore, err := srv.userContactsStore(userID)
+	if err != nil {
+		t.Fatalf("userContactsStore: %v", err)
+	}
+	if _, err := contactsStore.Upsert(contacts.Contact{
+		FormattedName: "Sender",
+		Emails:        []contacts.ContactValue{{Value: "sender@example.com"}},
+		PGPKey:        sender.ArmoredPublicKey,
+	}); err != nil {
+		t.Fatalf("Upsert contact: %v", err)
+	}
+
+	plaintext := mailmsg.Message{
+		From:    "sender@example.com",
+		To:      []string{"recipient@example.com"},
+		Subject: "Signed only",
+		Body:    "trust me",
+		Mode:    "plain",
+	}.Build()
+	signed, err := pgpmail.SignMIME(plaintext, sender)
+	if err != nil {
+		t.Fatalf("SignMIME: %v", err)
+	}
+	armoredSig := extractArmoredDetachedSignature(t, signed)
+
+	// The exact bytes VerifyDetached must be given to succeed are the signed
+	// MIME part as SignMIME produced it: a Content-Type header line plus the
+	// body, byte-identical to what buildSignedEnvelope wrapped (see
+	// pgpmail.SignMIME/buildSignedEnvelope). This mirrors the "verification
+	// succeeds when the exact signed bytes are available" case; a real
+	// goimap-parsed inbox body drops that header line, which is the
+	// documented best-effort gap verifySignedOnlyMessageContent's doc
+	// comment describes.
+	exactSignedContent := "Content-Type: text/plain; charset=UTF-8\r\n\r\ntrust me"
+
+	t.Run("verifies against the exact signed bytes", func(t *testing.T) {
+		content := imapadapter.MessageContent{Body: exactSignedContent, PGPSignaturePayload: armoredSig}
+		result := srv.verifySignedOnlyMessageContent(userID, content)
+
+		if !result.PGPSigned {
+			t.Fatal("expected PGPSigned to be true")
+		}
+		if result.PGPSignaturePayload != "" {
+			t.Fatal("expected PGPSignaturePayload to be cleared after verification")
+		}
+		if !result.PGPVerified {
+			t.Fatal("expected signature to verify against the known contact key")
+		}
+		if result.PGPSignerFingerprint != sender.Fingerprint {
+			t.Fatalf("signer fingerprint mismatch: got %s want %s", result.PGPSignerFingerprint, sender.Fingerprint)
+		}
+	})
+
+	t.Run("best-effort: a body that doesn't byte-match leaves it unverified, not erroring", func(t *testing.T) {
+		content := imapadapter.MessageContent{Body: "trust me", PGPSignaturePayload: armoredSig}
+		result := srv.verifySignedOnlyMessageContent(userID, content)
+
+		if !result.PGPSigned {
+			t.Fatal("expected PGPSigned to stay true even when verification can't confirm the signature")
+		}
+		if result.PGPVerified {
+			t.Fatal("expected PGPVerified to be false when the body doesn't byte-match the signed content")
+		}
+	})
+}
+
+func TestVerifySignedOnlyMessageContentUnknownSigner(t *testing.T) {
+	srv := newTestServer(t)
+	all, err := srv.users.List()
+	if err != nil || len(all) == 0 {
+		t.Fatalf("no test user available: %v", err)
+	}
+	userID := all[0].ID
+
+	stranger, err := pgpmail.GenerateIdentity("Stranger", "stranger@example.com")
+	if err != nil {
+		t.Fatalf("GenerateIdentity: %v", err)
+	}
+	plaintext := mailmsg.Message{
+		From:    "stranger@example.com",
+		To:      []string{"recipient@example.com"},
+		Subject: "Signed only",
+		Body:    "trust me",
+		Mode:    "plain",
+	}.Build()
+	signed, err := pgpmail.SignMIME(plaintext, stranger)
+	if err != nil {
+		t.Fatalf("SignMIME: %v", err)
+	}
+	armoredSig := extractArmoredDetachedSignature(t, signed)
+
+	content := imapadapter.MessageContent{
+		Body:                "Content-Type: text/plain; charset=UTF-8\r\n\r\ntrust me",
+		PGPSignaturePayload: armoredSig,
+	}
+	result := srv.verifySignedOnlyMessageContent(userID, content)
+	if !result.PGPSigned {
+		t.Fatal("expected PGPSigned to be true")
+	}
+	if result.PGPVerified {
+		t.Fatal("expected PGPVerified to be false when the signer isn't a known contact")
+	}
+}

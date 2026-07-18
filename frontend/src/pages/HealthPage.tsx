@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { getJSON } from "../api/client";
+import { getJSON, postJSON, toErrorMessage } from "../api/client";
+import { useAuth } from "../auth";
 
 type Health = {
   healthy: boolean;
@@ -31,10 +32,13 @@ function formatDuration(totalSeconds: number): string {
 }
 
 export function HealthPage() {
+  const auth = useAuth();
   const [health, setHealth] = useState<Health | null>(null);
   const [runStatus, setRunStatus] = useState<RunStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshEvery, setRefreshEvery] = useState(10);
+  const [polling, setPolling] = useState(false);
+  const [pollStatus, setPollStatus] = useState("");
 
   async function refreshHealth() {
     setLoading(true);
@@ -50,6 +54,20 @@ export function HealthPage() {
       setRunStatus(null);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function pollMailNow() {
+    setPolling(true);
+    setPollStatus("");
+    try {
+      await postJSON("/api/admin/mail/poll-now", {});
+      setPollStatus("Mail poll triggered.");
+      await refreshHealth();
+    } catch (error: unknown) {
+      setPollStatus(`Failed to trigger mail poll: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setPolling(false);
     }
   }
 
@@ -93,8 +111,14 @@ export function HealthPage() {
           <button type="button" onClick={refreshHealth} disabled={loading}>
             {loading ? "Refreshing..." : "Refresh"}
           </button>
+          {auth.role === "admin" && (
+            <button type="button" onClick={() => void pollMailNow()} disabled={polling}>
+              {polling ? "Polling..." : "Poll mail now"}
+            </button>
+          )}
         </div>
       </div>
+      {pollStatus && <p className="security-muted">{pollStatus}</p>}
 
       {!health ? (
         <p>Waiting for health data.</p>

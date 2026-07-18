@@ -33,6 +33,8 @@ export function checkPGPRecipients(addresses: string[]): Promise<{ results: PGPR
   return postJSON<{ results: PGPRecipientStatus[] }>("/api/pgp/recipients/check", { addresses });
 }
 
-export function lookupPGPKeyserver(email: string): Promise<{ email: string; fingerprint: string; keyId: string; publicKey: string }> {
+export function lookupPGPKeyserver(
+  email: string
+): Promise<{ email: string; fingerprint: string; keyId: string; publicKey: string; revoked: boolean; expired: boolean }> {
   return getJSON(`/api/pgp/keyserver/lookup?email=${encodeURIComponent(email)}`);
 }

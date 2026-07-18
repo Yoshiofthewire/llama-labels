@@ -56,9 +56,17 @@ type UnreadMessage struct {
 	// Decryption itself happens in internal/api, which holds the reading
 	// user's key — this package only detects and exposes the raw payload.
 	PGPEncryptedPayload string
+	// PGPSignaturePayload holds the armored OpenPGP detached signature when
+	// the fetched email is RFC 3156 multipart/signed (signed but not
+	// encrypted) — detected by sniffing e.Attachments for an armored PGP
+	// signature block. Unlike PGPEncryptedPayload, this is set alongside a
+	// normal, readable Body (signed-only mail isn't opaque to goimap).
+	// Empty when the message carries no detached signature. Verification
+	// happens in internal/api, which holds the sender's known public keys.
+	PGPSignaturePayload string
 	// PGPEncrypted/PGPSigned/PGPVerified/PGPSignerFingerprint/
-	// PGPDecryptError are populated by internal/api after decryption; they
-	// start zero-valued here.
+	// PGPDecryptError are populated by internal/api after decryption or
+	// signature verification; they start zero-valued here.
 	PGPEncrypted         bool
 	PGPSigned            bool
 	PGPVerified          bool
@@ -79,9 +87,17 @@ type MessageContent struct {
 	// Decryption itself happens in internal/api, which holds the reading
 	// user's key — this package only detects and exposes the raw payload.
 	PGPEncryptedPayload string
+	// PGPSignaturePayload holds the armored OpenPGP detached signature when
+	// the fetched email is RFC 3156 multipart/signed (signed but not
+	// encrypted) — detected by sniffing e.Attachments for an armored PGP
+	// signature block. Unlike PGPEncryptedPayload, this is set alongside a
+	// normal, readable Body. Empty when the message carries no detached
+	// signature. Verification happens in internal/api, which holds the
+	// sender's known public keys.
+	PGPSignaturePayload string
 	// PGPEncrypted/PGPSigned/PGPVerified/PGPSignerFingerprint/
-	// PGPDecryptError are populated by internal/api after decryption; they
-	// start zero-valued here.
+	// PGPDecryptError are populated by internal/api after decryption or
+	// signature verification; they start zero-valued here.
 	PGPEncrypted         bool
 	PGPSigned            bool
 	PGPVerified          bool
@@ -100,6 +116,22 @@ type MessageContent struct {
 func pgpDetectPayload(attachments []goimap.Attachment) string {
 	for _, a := range attachments {
 		if pgpcrypto.IsPGPMessage(string(a.Content)) {
+			return string(a.Content)
+		}
+	}
+	return ""
+}
+
+// pgpDetectSignature scans attachments for an armored OpenPGP detached
+// signature — the application/pgp-signature part of an RFC 3156
+// multipart/signed message (the "signature.asc" attachment written by this
+// codebase's own signed-MIME builder, and the equivalent from any other
+// PGP/MIME sender). Unlike encrypted mail, a signed-only message keeps a
+// normal readable body, so callers check for this alongside the body rather
+// than only when the body is empty.
+func pgpDetectSignature(attachments []goimap.Attachment) string {
+	for _, a := range attachments {
+		if strings.HasPrefix(strings.TrimSpace(string(a.Content)), "-----BEGIN PGP SIGNATURE-----") {
 			return string(a.Content)
 		}
 	}
@@ -518,6 +550,8 @@ func (c *APIClient) ListUnreadMessages(ctx context.Context, mailbox string, limi
 				msg.PGPEncryptedPayload = payload
 				msg.HasAttachments = false
 			}
+		} else if sig := pgpDetectSignature(e.Attachments); sig != "" {
+			msg.PGPSignaturePayload = sig
 		}
 		out = append(out, msg)
 	}
@@ -711,6 +745,8 @@ func (c *APIClient) GetMessageBodies(ctx context.Context, mailbox string, uids [
 				content.PGPEncryptedPayload = payload
 				content.HasAttachments = false
 			}
+		} else if sig := pgpDetectSignature(e.Attachments); sig != "" {
+			content.PGPSignaturePayload = sig
 		}
 		out[uid] = content
 	}

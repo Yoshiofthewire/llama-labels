@@ -99,6 +99,61 @@ func (s *Server) decryptPGPUnreadMessage(userID string, msg imapadapter.UnreadMe
 	return msg
 }
 
+// verifySignedOnlyMessageContent verifies c's PGPSignaturePayload — a
+// detached signature from an RFC 3156 multipart/signed (signed but not
+// encrypted) message — against every known contact's public key, the same
+// signer lookup decryptPGPMessageContent uses. Verification is best-effort
+// per pgpmail.VerifyDetached's doc comment: third-party MIME
+// canonicalization can differ from what was actually signed, so a
+// verification failure just leaves PGPVerified false rather than erroring
+// the whole inbox fetch.
+func (s *Server) verifySignedOnlyMessageContent(userID string, c imapadapter.MessageContent) imapadapter.MessageContent {
+	c.PGPSigned = true
+	sig := c.PGPSignaturePayload
+	c.PGPSignaturePayload = ""
+
+	contactsStore, err := s.userContactsStore(userID)
+	if err != nil {
+		return c
+	}
+	signerKeys := allKnownPGPKeys(contactsStore)
+	if len(signerKeys) == 0 {
+		return c
+	}
+	result, err := pgpmail.VerifyDetached([]byte(c.Body), sig, signerKeys)
+	if err != nil {
+		return c
+	}
+	c.PGPVerified = result.Verified
+	c.PGPSignerFingerprint = result.SignerFingerprint
+	return c
+}
+
+// verifySignedOnlyUnreadMessage mirrors verifySignedOnlyMessageContent for
+// the imapadapter.UnreadMessage shape used by ListUnreadMessages's classic
+// (non-delta) inbox path.
+func (s *Server) verifySignedOnlyUnreadMessage(userID string, msg imapadapter.UnreadMessage) imapadapter.UnreadMessage {
+	msg.PGPSigned = true
+	sig := msg.PGPSignaturePayload
+	msg.PGPSignaturePayload = ""
+
+	contactsStore, err := s.userContactsStore(userID)
+	if err != nil {
+		return msg
+	}
+	signerKeys := allKnownPGPKeys(contactsStore)
+	if len(signerKeys) == 0 {
+		return msg
+	}
+	result, err := pgpmail.VerifyDetached([]byte(msg.Body), sig, signerKeys)
+	if err != nil {
+		return msg
+	}
+	msg.PGPVerified = result.Verified
+	msg.PGPSignerFingerprint = result.SignerFingerprint
+	return msg
+}
+
 // allKnownPGPKeys returns every contact's armored public key, offered as the
 // candidate signer set when verifying an inbound signed-and-encrypted
 // message: the sender isn't known in advance, so all are tried — DecryptMIME

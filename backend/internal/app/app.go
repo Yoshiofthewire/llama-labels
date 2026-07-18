@@ -158,6 +158,7 @@ func runAll(d runDeps) error {
 	}
 	poller.SetConfigPath(d.configPath)
 	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, poller.UpdateConfig)
+	srv.SetPoller(poller)
 	warmupLlamaOnStartup(d.logger, llamaClient, poller)
 
 	stop := make(chan os.Signal, 1)

@@ -25,7 +25,8 @@ import {
   type ContactValue,
   type IMService
 } from "../api/contacts";
-import { createGroup, listGroups, type Group } from "../api/groups";
+import { createGroup, deleteGroup, listGroups, renameGroup, type Group } from "../api/groups";
+import { lookupPGPKeyserver } from "../api/pgp";
 import { usePagination } from "../hooks/usePagination";
 import { PageTabs } from "../components/PageTabs";
 import { MultiValueField } from "../components/MultiValueField";
@@ -232,6 +233,10 @@ export function ContactsPage() {
   const [groups, setGroups] = useState<Group[]>([]);
   const [newGroupName, setNewGroupName] = useState("");
   const [creatingGroup, setCreatingGroup] = useState(false);
+  const [renamingGroupId, setRenamingGroupId] = useState("");
+  const [renameGroupName, setRenameGroupName] = useState("");
+  const [groupBusyId, setGroupBusyId] = useState("");
+  const [pgpLookupBusy, setPgpLookupBusy] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
@@ -500,6 +505,77 @@ export function ContactsPage() {
       setStatus(`Failed to create group: ${toErrorMessage(error, "unknown error")}`);
     } finally {
       setCreatingGroup(false);
+    }
+  }
+
+  function beginRenameGroup(group: Group) {
+    setRenamingGroupId(group.id);
+    setRenameGroupName(group.name);
+  }
+
+  function cancelRenameGroup() {
+    setRenamingGroupId("");
+    setRenameGroupName("");
+  }
+
+  async function handleRenameGroup(id: string) {
+    const name = renameGroupName.trim();
+    if (!name) return;
+    setGroupBusyId(id);
+    setStatus("");
+    try {
+      const updated = await renameGroup(id, name);
+      setGroups((prev) => [...prev.filter((g) => g.id !== id), updated].sort((a, b) => a.name.localeCompare(b.name)));
+      cancelRenameGroup();
+    } catch (error: unknown) {
+      setStatus(`Failed to rename group: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setGroupBusyId("");
+    }
+  }
+
+  async function handleDeleteGroup(group: Group) {
+    if (!window.confirm(`Delete group "${group.name}"? It will be removed from any contacts that have it.`)) {
+      return;
+    }
+    setGroupBusyId(group.id);
+    setStatus("");
+    try {
+      await deleteGroup(group.id);
+      setGroups((prev) => prev.filter((g) => g.id !== group.id));
+      setForm((f) => ({ ...f, groupIDs: f.groupIDs.filter((id) => id !== group.id) }));
+      if (renamingGroupId === group.id) {
+        cancelRenameGroup();
+      }
+      await refresh();
+    } catch (error: unknown) {
+      setStatus(`Failed to delete group: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setGroupBusyId("");
+    }
+  }
+
+  async function handleLookupPGPKeyserver() {
+    const email = form.emails.map((e) => e.value.trim()).find((v) => v !== "");
+    if (!email) {
+      setStatus("Add an email address before looking up a key on the keyserver.");
+      return;
+    }
+    setPgpLookupBusy(true);
+    setStatus("");
+    try {
+      const result = await lookupPGPKeyserver(email);
+      setForm((f) => ({ ...f, pgpKey: result.publicKey }));
+      const warnings = [result.revoked ? "revoked" : "", result.expired ? "expired" : ""].filter(Boolean);
+      setStatus(
+        warnings.length > 0
+          ? `Found a key for ${email}, but it is ${warnings.join(" and ")} — review before saving.`
+          : `Found a key for ${email}. Review the fingerprint below, then save to attach it.`
+      );
+    } catch (error: unknown) {
+      setStatus(`Keyserver lookup for ${email} failed: ${toErrorMessage(error, "no key found")}`);
+    } finally {
+      setPgpLookupBusy(false);
     }
   }
 
@@ -1143,23 +1219,63 @@ export function ContactsPage() {
 
             <div className="contacts-multivalue">
               <div className="contacts-multivalue-label">Groups</div>
-              {groups.map((g) => (
-                <label key={g.id} className="contacts-group-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={form.groupIDs.includes(g.id)}
-                    onChange={() =>
-                      setForm({
-                        ...form,
-                        groupIDs: form.groupIDs.includes(g.id)
-                          ? form.groupIDs.filter((id) => id !== g.id)
-                          : [...form.groupIDs, g.id]
-                      })
-                    }
-                  />
-                  {g.name}
-                </label>
-              ))}
+              {groups.map((g) =>
+                renamingGroupId === g.id ? (
+                  <div key={g.id} className="contacts-group-row">
+                    <input
+                      type="text"
+                      value={renameGroupName}
+                      onChange={(e) => setRenameGroupName(e.target.value)}
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      className="contacts-action"
+                      onClick={() => void handleRenameGroup(g.id)}
+                      disabled={groupBusyId === g.id || !renameGroupName.trim()}
+                    >
+                      Save
+                    </button>
+                    <button type="button" className="contacts-action" onClick={cancelRenameGroup} disabled={groupBusyId === g.id}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div key={g.id} className="contacts-group-row">
+                    <label className="contacts-group-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={form.groupIDs.includes(g.id)}
+                        onChange={() =>
+                          setForm({
+                            ...form,
+                            groupIDs: form.groupIDs.includes(g.id)
+                              ? form.groupIDs.filter((id) => id !== g.id)
+                              : [...form.groupIDs, g.id]
+                          })
+                        }
+                      />
+                      {g.name}
+                    </label>
+                    <button
+                      type="button"
+                      className="contacts-action"
+                      onClick={() => beginRenameGroup(g)}
+                      disabled={groupBusyId === g.id}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      className="contacts-action-danger"
+                      onClick={() => void handleDeleteGroup(g)}
+                      disabled={groupBusyId === g.id}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )
+              )}
               <div className="contacts-multivalue-row">
                 <input
                   type="text"
@@ -1188,6 +1304,14 @@ export function ContactsPage() {
                 placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----"
               />
             </label>
+            <button
+              type="button"
+              className="contacts-action"
+              onClick={() => void handleLookupPGPKeyserver()}
+              disabled={pgpLookupBusy}
+            >
+              {pgpLookupBusy ? "Looking up…" : "Look up on keyserver"}
+            </button>
             <PGPKeyInfo armoredKey={form.pgpKey} />
 
             <label>

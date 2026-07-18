@@ -2036,6 +2036,17 @@ pre {
   background: none;
 }
 
+.contacts-group-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.contacts-group-row .contacts-group-checkbox {
+  flex: 1;
+  min-width: 0;
+}
+
 .contacts-form-actions {
   display: flex;
   gap: 8px;
