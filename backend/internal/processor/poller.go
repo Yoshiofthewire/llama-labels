@@ -104,7 +104,7 @@ func New(cfg config.Config, log *logging.Logger, globalStore *state.Store, users
 		nativePushDispatcher: NewNativePushDispatcher(log),
 		stateDir:             stateDir,
 		configDir:            configDir,
-		imapKeyPath:          config.EnvOrDefault("IMAP_CONFIG_KEY_FILE", "/llama_lab/private/imap-config.key"),
+		imapKeyPath:          config.EnvOrDefault("IMAP_CONFIG_KEY_FILE", "/kypost/private/imap-config.key"),
 		stores:               map[string]*state.Store{},
 		mailClients:          map[string]*mailClientEntry{},
 		mailCaches:           map[string]*mailcache.Store{},

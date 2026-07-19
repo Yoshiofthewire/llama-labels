@@ -43,7 +43,7 @@ func newTestServer(t *testing.T) *Server {
 	srv.configDir = configDir
 	srv.totpSecretKeyPath = filepath.Join(configDir, "totp-secret.key")
 	srv.pgpPrivateKeyPath = filepath.Join(configDir, "pgp-private-key.key")
-	// NewServer wires pickupStore to the process-default /llama_lab/...
+	// NewServer wires pickupStore to the process-default /kypost/...
 	// paths at construction time, before stateDir above gets overridden, so
 	// it must be rebuilt here against the temp dirs or pickup tests would
 	// try to write outside the sandbox.

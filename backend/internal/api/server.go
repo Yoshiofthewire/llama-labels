@@ -117,13 +117,13 @@ type Server struct {
 }
 
 func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Service, usersStore *users.Store, onConfigUpdated func(config.Config)) *Server {
-	configDir := config.EnvOrDefault("CONFIG_DIR", "/llama_lab/config")
-	stateDir := config.EnvOrDefault("STATE_DIR", "/llama_lab/state")
-	logPath := filepath.Join(config.EnvOrDefault("LOG_DIR", "/llama_lab/logs"), "app.log")
-	imapConfigKeyPath := config.EnvOrDefault("IMAP_CONFIG_KEY_FILE", "/llama_lab/private/imap-config.key")
-	totpSecretKeyPath := config.EnvOrDefault("TOTP_SECRET_KEY_FILE", "/llama_lab/private/totp-secret.key")
-	pgpPrivateKeyPath := config.EnvOrDefault("PGP_PRIVATE_KEY_FILE", "/llama_lab/private/pgp-private-key.key")
-	pickupStoreKeyPath := config.EnvOrDefault("PICKUP_STORE_KEY_FILE", "/llama_lab/private/pickup-store.key")
+	configDir := config.EnvOrDefault("CONFIG_DIR", "/kypost/config")
+	stateDir := config.EnvOrDefault("STATE_DIR", "/kypost/state")
+	logPath := filepath.Join(config.EnvOrDefault("LOG_DIR", "/kypost/logs"), "app.log")
+	imapConfigKeyPath := config.EnvOrDefault("IMAP_CONFIG_KEY_FILE", "/kypost/private/imap-config.key")
+	totpSecretKeyPath := config.EnvOrDefault("TOTP_SECRET_KEY_FILE", "/kypost/private/totp-secret.key")
+	pgpPrivateKeyPath := config.EnvOrDefault("PGP_PRIVATE_KEY_FILE", "/kypost/private/pgp-private-key.key")
+	pickupStoreKeyPath := config.EnvOrDefault("PICKUP_STORE_KEY_FILE", "/kypost/private/pickup-store.key")
 	pairingSecret := strings.TrimSpace(os.Getenv("PAIRING_SECRET"))
 
 	captchaProvider := captcha.Provider(strings.ToLower(strings.TrimSpace(os.Getenv("CAPTCHA_PROVIDER"))))
@@ -3021,7 +3021,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			lines = v
 		}
 	}
-	logDir := config.EnvOrDefault("LOG_DIR", "/llama_lab/logs")
+	logDir := config.EnvOrDefault("LOG_DIR", "/kypost/logs")
 	// Resolve requested file — default to app.log, allow any *.log in logDir
 	filename := filepath.Base(r.URL.Query().Get("file"))
 	if filename == "" || filename == "." {
@@ -3042,7 +3042,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogsList(w http.ResponseWriter, r *http.Request) {
-	logDir := config.EnvOrDefault("LOG_DIR", "/llama_lab/logs")
+	logDir := config.EnvOrDefault("LOG_DIR", "/kypost/logs")
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
 		http.Error(w, "failed to list logs", http.StatusInternalServerError)
@@ -3482,7 +3482,7 @@ func (s *Server) handleClassifierTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFrontend(w http.ResponseWriter, r *http.Request) {
-	frontendDir := config.EnvOrDefault("FRONTEND_DIR", "/opt/llama-lab/frontend")
+	frontendDir := config.EnvOrDefault("FRONTEND_DIR", "/opt/kypost/frontend")
 	indexPath := filepath.Join(frontendDir, "index.html")
 
 	requestPath := path.Clean("/" + r.URL.Path)

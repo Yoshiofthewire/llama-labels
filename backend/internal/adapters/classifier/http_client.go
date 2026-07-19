@@ -85,7 +85,7 @@ func NewHTTPClient(baseURL, apiKey, path, tuning string, timeout time.Duration) 
 
 	logDir := strings.TrimSpace(os.Getenv("LOG_DIR"))
 	if logDir == "" {
-		logDir = "/llama_lab/logs"
+		logDir = "/kypost/logs"
 	}
 
 	return &HTTPClient{
@@ -505,7 +505,7 @@ func LoadTuningText() string {
 	if envPath := strings.TrimSpace(os.Getenv("TUNING_FILE")); envPath != "" {
 		paths = append(paths, envPath)
 	}
-	paths = append(paths, "/llama_lab/config/TUNING.md", "TUNING.md", "/opt/llama-lab/TUNING.md")
+	paths = append(paths, "/kypost/config/TUNING.md", "TUNING.md", "/opt/kypost/TUNING.md")
 
 	for _, p := range paths {
 		b, err := os.ReadFile(p)

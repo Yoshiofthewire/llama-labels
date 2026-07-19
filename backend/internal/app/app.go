@@ -32,9 +32,9 @@ func Run(args []string) error {
 	}
 
 	paths := config.Paths{
-		ConfigFile: filepath.Join(config.EnvOrDefault("CONFIG_DIR", "/llama_lab/config"), "config.yaml"),
-		StateDir:   config.EnvOrDefault("STATE_DIR", "/llama_lab/state"),
-		LogDir:     config.EnvOrDefault("LOG_DIR", "/llama_lab/logs"),
+		ConfigFile: filepath.Join(config.EnvOrDefault("CONFIG_DIR", "/kypost/config"), "config.yaml"),
+		StateDir:   config.EnvOrDefault("STATE_DIR", "/kypost/state"),
+		LogDir:     config.EnvOrDefault("LOG_DIR", "/kypost/logs"),
 	}
 
 	// Capture legacy notification prefs before LoadOrInit rewrites
@@ -72,7 +72,7 @@ func Run(args []string) error {
 		return fmt.Errorf("create state store: %w", err)
 	}
 
-	configDir := config.EnvOrDefault("CONFIG_DIR", "/llama_lab/config")
+	configDir := config.EnvOrDefault("CONFIG_DIR", "/kypost/config")
 	usersStore, err := users.LoadOrMigrate(configDir, filepath.Join(configDir, "admin.env"))
 	if err != nil {
 		return fmt.Errorf("load users store: %w", err)

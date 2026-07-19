@@ -250,7 +250,7 @@ func NewAPIClientFromStoredConfig(configPath, configKeyPath string) *APIClient {
 func defaultConfigPath() string {
 	path := strings.TrimSpace(os.Getenv("IMAP_CONFIG_FILE"))
 	if path == "" {
-		path = "/llama_lab/private/imap-config.json"
+		path = "/kypost/private/imap-config.json"
 	}
 	return path
 }
@@ -258,7 +258,7 @@ func defaultConfigPath() string {
 func defaultConfigKeyPath() string {
 	path := strings.TrimSpace(os.Getenv("IMAP_CONFIG_KEY_FILE"))
 	if path == "" {
-		path = "/llama_lab/private/imap-config.key"
+		path = "/kypost/private/imap-config.key"
 	}
 	return path
 }

@@ -37,12 +37,12 @@ func migrateLegacySingleUserData(logger *logging.Logger, usersStore *users.Store
 	// Encrypted IMAP credentials (still encrypted under the global master key).
 	legacyIMAP := strings.TrimSpace(os.Getenv("IMAP_CONFIG_FILE"))
 	if legacyIMAP == "" {
-		legacyIMAP = "/llama_lab/private/imap-config.json"
+		legacyIMAP = "/kypost/private/imap-config.json"
 	}
 	copyIfMissing(logger, legacyIMAP, filepath.Join(userConfigDir, "imap-config.json"))
 
 	// Tuning prompt: first existing legacy candidate wins.
-	tuningCandidates := []string{strings.TrimSpace(os.Getenv("TUNING_FILE")), filepath.Join(configDir, "TUNING.md"), "TUNING.md", "/opt/llama-lab/TUNING.md"}
+	tuningCandidates := []string{strings.TrimSpace(os.Getenv("TUNING_FILE")), filepath.Join(configDir, "TUNING.md"), "TUNING.md", "/opt/kypost/TUNING.md"}
 	for _, candidate := range tuningCandidates {
 		if candidate == "" {
 			continue

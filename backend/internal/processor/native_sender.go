@@ -90,7 +90,7 @@ func relayKeyFilePathWithPrefix(prefix string) string {
 	}
 	dir := strings.TrimSpace(os.Getenv("SECRET_DIR"))
 	if dir == "" {
-		dir = "/llama_lab/private"
+		dir = "/kypost/private"
 	}
 	// e.g. "push_relay_key" for PUSH_RELAY, "apns_relay_key" for APNS_RELAY.
 	name := strings.ToLower(strings.TrimSuffix(prefix, "_RELAY")) + "_relay_key"
