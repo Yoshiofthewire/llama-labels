@@ -1258,7 +1258,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// Remote LLM settings (including the API key) are admin-only to
 		// edit; don't hand the plaintext key to a non-admin session either.
 		if ac, ok := authFromContext(r); !ok || ac.Role != users.RoleAdmin {
-			cfg.Llama.APIKey = ""
+			cfg.Classifier.APIKey = ""
 		}
 		writeJSON(w, http.StatusOK, cfg)
 	case http.MethodPut:
@@ -1268,7 +1268,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.mu.RLock()
-		llamaChanged := next.Llama != s.cfg.Llama
+		llamaChanged := next.Classifier != s.cfg.Classifier
 		// VAPID key material is server-owned and json:"-" on the wire;
 		// carry it across the round-trip.
 		next.Notifications = s.cfg.Notifications
@@ -3434,7 +3434,7 @@ func (s *Server) handleLlamaTest(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfg
 	s.mu.RUnlock()
 
-	baseURL := strings.TrimSpace(cfg.Llama.BaseURL)
+	baseURL := strings.TrimSpace(cfg.Classifier.BaseURL)
 	if baseURL == "" {
 		baseURL = strings.TrimSpace(os.Getenv("LLAMA_BASE_URL"))
 	}
@@ -3443,11 +3443,11 @@ func (s *Server) handleLlamaTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := strings.TrimSpace(cfg.Llama.ClassifyPath)
+	path := strings.TrimSpace(cfg.Classifier.ClassifyPath)
 	if path == "" {
 		path = "/"
 	}
-	apiKey := strings.TrimSpace(cfg.Llama.APIKey)
+	apiKey := strings.TrimSpace(cfg.Classifier.APIKey)
 	if apiKey == "" {
 		apiKey = strings.TrimSpace(os.Getenv("LLAMA_API_KEY"))
 	}

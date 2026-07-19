@@ -241,7 +241,7 @@ func TestConfigPutRejectsNonAdminLlamaChange(t *testing.T) {
 	}
 
 	// Non-admin PUT that changes Llama settings is rejected with 403.
-	cfg["llama"] = map[string]any{"baseUrl": "http://evil.example", "apiKey": "x", "classifyPath": "/"}
+	cfg["classifier"] = map[string]any{"baseUrl": "http://evil.example", "apiKey": "x", "classifyPath": "/"}
 	body, _ = json.Marshal(cfg)
 	req = httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
 	authRequestAs(srv, req, regular.ID)

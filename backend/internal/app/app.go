@@ -234,7 +234,7 @@ func monitorHealth(logger *logging.Logger, healthSvc *health.Service) {
 func newLlamaClient(cfg config.Config) *classifier.HTTPClient {
 	const legacyDeadDefault = "http://127.0.0.1:3333"
 
-	baseURL := strings.TrimSpace(cfg.Llama.BaseURL)
+	baseURL := strings.TrimSpace(cfg.Classifier.BaseURL)
 	fromConfig := baseURL != "" && baseURL != legacyDeadDefault
 	if !fromConfig {
 		baseURL = strings.TrimSpace(os.Getenv("OLLAMA_BASE_URL"))
@@ -246,14 +246,14 @@ func newLlamaClient(cfg config.Config) *classifier.HTTPClient {
 		}
 	}
 
-	apiKey := strings.TrimSpace(cfg.Llama.APIKey)
+	apiKey := strings.TrimSpace(cfg.Classifier.APIKey)
 	if apiKey == "" {
 		apiKey = strings.TrimSpace(os.Getenv("OLLAMA_API_KEY"))
 	}
 
 	classifyPath := ""
 	if fromConfig {
-		classifyPath = strings.TrimSpace(cfg.Llama.ClassifyPath)
+		classifyPath = strings.TrimSpace(cfg.Classifier.ClassifyPath)
 	}
 	if classifyPath == "" || classifyPath == "/" {
 		classifyPath = strings.TrimSpace(os.Getenv("OLLAMA_GENERATE_PATH"))

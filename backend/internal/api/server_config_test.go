@@ -67,7 +67,7 @@ func TestConfigGetMasksLLMAPIKeyForNonAdmin(t *testing.T) {
 	admin, regular := newTestUsers(t, srv)
 
 	srv.mu.Lock()
-	srv.cfg.Llama.APIKey = "sk-super-secret-key"
+	srv.cfg.Classifier.APIKey = "sk-super-secret-key"
 	srv.mu.Unlock()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
@@ -81,8 +81,8 @@ func TestConfigGetMasksLLMAPIKeyForNonAdmin(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &nonAdminCfg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if nonAdminCfg.Llama.APIKey != "" {
-		t.Fatalf("non-admin GET /api/config leaked the LLM API key: %q", nonAdminCfg.Llama.APIKey)
+	if nonAdminCfg.Classifier.APIKey != "" {
+		t.Fatalf("non-admin GET /api/config leaked the LLM API key: %q", nonAdminCfg.Classifier.APIKey)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/config", nil)
@@ -93,8 +93,8 @@ func TestConfigGetMasksLLMAPIKeyForNonAdmin(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &adminCfg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if adminCfg.Llama.APIKey != "sk-super-secret-key" {
-		t.Fatalf("admin GET /api/config APIKey = %q, want the real key", adminCfg.Llama.APIKey)
+	if adminCfg.Classifier.APIKey != "sk-super-secret-key" {
+		t.Fatalf("admin GET /api/config APIKey = %q, want the real key", adminCfg.Classifier.APIKey)
 	}
 }
 
