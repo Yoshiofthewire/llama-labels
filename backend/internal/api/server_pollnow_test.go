@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"kypost-server/backend/internal/adapters/llama"
+	"kypost-server/backend/internal/adapters/classifier"
 	"kypost-server/backend/internal/config"
 	"kypost-server/backend/internal/processor"
 	"kypost-server/backend/internal/state"
@@ -55,7 +55,7 @@ func TestHandlePollNowTriggersPoll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("state.New: %v", err)
 	}
-	llamaClient := llama.NewHTTPClient("http://127.0.0.1:0", "", "", "", time.Second)
+	llamaClient := classifier.NewHTTPClient("http://127.0.0.1:0", "", "", "", time.Second)
 	poller, err := processor.New(config.Default(), srv.logger, globalStore, srv.users, srv.stateDir, srv.configDir, srv.health, llamaClient)
 	if err != nil {
 		t.Fatalf("processor.New: %v", err)

@@ -30,7 +30,7 @@ import (
 	"time"
 
 	imapadapter "kypost-server/backend/internal/adapters/imap"
-	"kypost-server/backend/internal/adapters/llama"
+	"kypost-server/backend/internal/adapters/classifier"
 	"kypost-server/backend/internal/captcha"
 	"kypost-server/backend/internal/config"
 	"kypost-server/backend/internal/contacts"
@@ -1287,7 +1287,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		s.cfg = next
 		s.mu.Unlock()
 		if llamaChanged {
-			llama.ResetWarmupState()
+			classifier.ResetWarmupState()
 		}
 		if s.onConfigUpdated != nil {
 			s.onConfigUpdated(next)
@@ -2980,7 +2980,7 @@ func (s *Server) handleTuning(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				// New users start from the install's default tuning prompt.
-				fallback := strings.TrimSpace(llama.LoadTuningText())
+				fallback := strings.TrimSpace(classifier.LoadTuningText())
 				if fallback != "" {
 					writeJSON(w, http.StatusOK, map[string]any{"content": fallback, "path": tuningPath})
 					return
@@ -3462,8 +3462,8 @@ func (s *Server) handleLlamaTest(w http.ResponseWriter, r *http.Request) {
 		allowed = []string{"Questionable", "Important"}
 	}
 
-	tuning := llama.LoadTuningText()
-	client := llama.NewHTTPClient(baseURL, apiKey, path, tuning, 120*time.Second)
+	tuning := classifier.LoadTuningText()
+	client := classifier.NewHTTPClient(baseURL, apiKey, path, tuning, 120*time.Second)
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 

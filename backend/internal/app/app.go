@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"kypost-server/backend/internal/adapters/llama"
+	"kypost-server/backend/internal/adapters/classifier"
 	"kypost-server/backend/internal/api"
 	"kypost-server/backend/internal/config"
 	"kypost-server/backend/internal/health"
@@ -56,7 +56,7 @@ func Run(args []string) error {
 
 	// Auto-populate label allowlist from TUNING.md when the config has none.
 	if len(cfg.Labels.Allowlist) == 0 {
-		if labels := llama.ParseAllowedLabels(llama.LoadTuningText()); len(labels) > 0 {
+		if labels := classifier.ParseAllowedLabels(classifier.LoadTuningText()); len(labels) > 0 {
 			cfg.Labels.Allowlist = labels
 		}
 	}
@@ -231,7 +231,7 @@ func monitorHealth(logger *logging.Logger, healthSvc *health.Service) {
 // env-only deployments keep working. The persisted legacy config default
 // ("http://127.0.0.1:3333" with path "/") predates the Ollama runtime and
 // is treated as unset.
-func newLlamaClient(cfg config.Config) *llama.HTTPClient {
+func newLlamaClient(cfg config.Config) *classifier.HTTPClient {
 	const legacyDeadDefault = "http://127.0.0.1:3333"
 
 	baseURL := strings.TrimSpace(cfg.Llama.BaseURL)
@@ -264,11 +264,11 @@ func newLlamaClient(cfg config.Config) *llama.HTTPClient {
 
 	// The default tuning text only backstops callers that pass no per-call
 	// tuning (e.g. users who have not customized their prompt yet).
-	tuning := llama.LoadTuningText()
-	return llama.NewHTTPClient(baseURL, apiKey, classifyPath, tuning, 3*time.Minute)
+	tuning := classifier.LoadTuningText()
+	return classifier.NewHTTPClient(baseURL, apiKey, classifyPath, tuning, 3*time.Minute)
 }
 
-func warmupLlamaOnStartup(logger *logging.Logger, client *llama.HTTPClient, poller *processor.Poller) {
+func warmupLlamaOnStartup(logger *logging.Logger, client *classifier.HTTPClient, poller *processor.Poller) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()

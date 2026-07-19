@@ -14,7 +14,7 @@ import (
 	"time"
 
 	imapadapter "kypost-server/backend/internal/adapters/imap"
-	"kypost-server/backend/internal/adapters/llama"
+	"kypost-server/backend/internal/adapters/classifier"
 	"kypost-server/backend/internal/config"
 	"kypost-server/backend/internal/health"
 	"kypost-server/backend/internal/logging"
@@ -46,7 +46,7 @@ type Poller struct {
 	// the one shared LLM backend. Per-user mailbox state lives in stores.
 	globalStore          *state.Store
 	health               *health.Service
-	llama                *llama.HTTPClient
+	llama                *classifier.HTTPClient
 	redaction            *redaction.Engine
 	nativePushDispatcher *NativePushDispatcher
 	cancel               context.CancelFunc
@@ -88,7 +88,7 @@ type userCtx struct {
 	rules []rules.Rule
 }
 
-func New(cfg config.Config, log *logging.Logger, globalStore *state.Store, usersStore *users.Store, stateDir, configDir string, healthSvc *health.Service, llamaClient *llama.HTTPClient) (*Poller, error) {
+func New(cfg config.Config, log *logging.Logger, globalStore *state.Store, usersStore *users.Store, stateDir, configDir string, healthSvc *health.Service, llamaClient *classifier.HTTPClient) (*Poller, error) {
 	re, err := redaction.New(cfg.Redaction.Patterns)
 	if err != nil {
 		return nil, err
@@ -684,7 +684,7 @@ func (p *Poller) handleMessage(ctx context.Context, uc userCtx, msg imapadapter.
 	// A successful classification means Llama has credits again; clear any flag.
 	p.clearAICreditsExhausted()
 	p.log.Info("classification result", "user_id", uc.id, "message_id", msg.ID, "raw_label", strings.TrimSpace(label), "sender", msg.Sender, "subject", msg.Subject)
-	selected := llama.SelectLabelFromText(cfg.Labels.Allowlist, label)
+	selected := classifier.SelectLabelFromText(cfg.Labels.Allowlist, label)
 	if selected == "" {
 		p.log.Info("classification skipped", "user_id", uc.id, "message_id", msg.ID, "reason", "no known label returned", "raw_label", strings.TrimSpace(label), "allowlist_count", strconv.Itoa(len(cfg.Labels.Allowlist)))
 		_ = uc.store.AddDecision(state.Decision{
@@ -952,7 +952,7 @@ func buildNativePushData(msg imapadapter.Message, messageKeywords []string, titl
 	}
 }
 
-func classifyWithRetry(ctx context.Context, c *llama.HTTPClient, labels []string, sender, subject, body, tuning string) (string, error) {
+func classifyWithRetry(ctx context.Context, c *classifier.HTTPClient, labels []string, sender, subject, body, tuning string) (string, error) {
 	return retry.Loop(ctx, 3, func(attempt int) time.Duration {
 		return 5 * time.Second
 	}, func(attempt int) (string, error, bool) {
