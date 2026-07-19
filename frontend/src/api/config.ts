@@ -6,7 +6,7 @@ export type AppConfig = {
   scan: { intervalSeconds: number };
   rateLimits: { perMinute: number; perHour: number };
   labels: { allowlist: string[]; keywordMappings: Record<string, string[]> };
-  llama: { baseUrl: string; apiKey: string; classifyPath: string };
+  classifier: { baseUrl: string; apiKey: string; classifyPath: string };
 };
 
 export function uniqueLabels(labels: string[]): string[] {
@@ -36,7 +36,7 @@ function normalizeKeywordMappings(input: unknown): Record<string, string[]> {
 export function normalizeConfig(input: unknown): AppConfig {
   const source = (input ?? {}) as Record<string, any>;
   const labels = source.labels ?? {};
-  const llama = source.llama ?? {};
+  const classifier = source.classifier ?? {};
   const scan = source.scan ?? {};
   const rateLimits = source.rateLimits ?? {};
 
@@ -52,10 +52,10 @@ export function normalizeConfig(input: unknown): AppConfig {
       allowlist: labels.allowlist ?? [],
       keywordMappings: normalizeKeywordMappings(labels.keywordMappings)
     },
-    llama: {
-      baseUrl: llama.baseUrl ?? "",
-      apiKey: llama.apiKey ?? "",
-      classifyPath: llama.classifyPath ?? ""
+    classifier: {
+      baseUrl: classifier.baseUrl ?? "",
+      apiKey: classifier.apiKey ?? "",
+      classifyPath: classifier.classifyPath ?? ""
     }
   };
 }

@@ -1,4 +1,4 @@
-export const THEME_STORAGE_KEY = "llama-lab-theme";
+export const THEME_STORAGE_KEY = "kypost-theme";
 
 export const THEME_OPTIONS = [
   "Dark Matter",

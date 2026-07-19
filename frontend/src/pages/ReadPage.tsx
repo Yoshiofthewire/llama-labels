@@ -69,7 +69,7 @@ const SWIPE_HINT_THRESHOLD = 0.15;
 const SWIPE_ACTIVATE_THRESHOLD = 0.5;
 const SWIPE_DISMISS_RATIO = 1.08;
 const SWIPE_MAX_OFFSET_RATIO = 0.92;
-const SWIPE_HAPTICS_STORAGE_KEY = "llama-read-swipe-haptics-enabled";
+const SWIPE_HAPTICS_STORAGE_KEY = "kypost-read-swipe-haptics-enabled";
 
 type SwipeTone = "archive" | "delete";
 type SwipeRowState = {
@@ -1341,7 +1341,7 @@ export function ReadPage({ onOpenDraft }: ReadPageProps) {
                       key={`${item.messageId}-${item.atUtc}`}
                       draggable={!isTouchSwipeEnabled}
                       onDragStart={(event) => {
-                        event.dataTransfer.setData("application/x-llama-mailbox", dragMessagePayload(item));
+                        event.dataTransfer.setData("application/x-kypost-mailbox", dragMessagePayload(item));
                         event.dataTransfer.effectAllowed = "move";
                       }}
                       onTouchStart={(event) => handleSwipeStart(item.messageId, event)}

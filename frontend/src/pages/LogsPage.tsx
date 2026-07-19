@@ -8,10 +8,10 @@ const REFRESH_OPTIONS = [
   { label: "10s", value: 10 },
   { label: "30s", value: 30 },
 ];
-const HIDDEN_LOG_FILES = ["llama.log"];
+const HIDDEN_LOG_FILES = ["classifier.log"];
 
 // Files that should always appear first, in this order.
-const PINNED_LOG_ORDER = ["app.log", "llama.log", "llama-error.log"];
+const PINNED_LOG_ORDER = ["app.log", "classifier.log", "classifier-error.log"];
 
 
 function sortLogFiles(files: string[]): string[] {
@@ -21,7 +21,7 @@ function sortLogFiles(files: string[]): string[] {
 }
 
 function tabLabel(filename: string): string {
-  if (filename === "llama.log") return "Llama Server";
+  if (filename === "classifier.log") return "Classifier";
   return filename.replace(/\.log$/, "").replace(/[._-]/g, " ");
 }
 
