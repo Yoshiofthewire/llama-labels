@@ -95,9 +95,9 @@ func NewHTTPClient(baseURL, apiKey, path, tuning string, timeout time.Duration) 
 		model:          model,
 		client:         &http.Client{Timeout: timeout},
 		tuningTemplate: tuningTemplate,
-		outputLog:      logging.NewRotatingWriter(filepath.Join(logDir, "llama.log"), diagnosticLogMaxSize, diagnosticLogMaxFiles),
-		serverLog:      logging.NewRotatingWriter(filepath.Join(logDir, "llama-server.log"), diagnosticLogMaxSize, diagnosticLogMaxFiles),
-		errorLog:       logging.NewRotatingWriter(filepath.Join(logDir, "llama.err.log"), diagnosticLogMaxSize, diagnosticLogMaxFiles),
+		outputLog:      logging.NewRotatingWriter(filepath.Join(logDir, "classifier.log"), diagnosticLogMaxSize, diagnosticLogMaxFiles),
+		serverLog:      logging.NewRotatingWriter(filepath.Join(logDir, "classifier-server.log"), diagnosticLogMaxSize, diagnosticLogMaxFiles),
+		errorLog:       logging.NewRotatingWriter(filepath.Join(logDir, "classifier.err.log"), diagnosticLogMaxSize, diagnosticLogMaxFiles),
 	}
 }
 
@@ -548,5 +548,5 @@ func (c *HTTPClient) logServer(message string) {
 }
 
 func (c *HTTPClient) logError(message string) {
-	c.logLine(c.errorLog, "[LLAMA ERROR]", message)
+	c.logLine(c.errorLog, "[CLASSIFIER ERROR]", message)
 }
