@@ -22,7 +22,7 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 - The Notifications page also renders a mobile pairing QR code (using the `qrcode` package): it reads `GET /api/notifications/pairing` and encodes a `llamalabels://native-pair?sub=&hash=&srv=&reg=&pt=` deep link. `pt` is a 90-second pairing token. A 4px bar under the QR shrinks over the 90-second window, transitions from green to red, stays red for the last 15 seconds, then disappears while the page refreshes the QR. The mobile app scans it and uses `reg` (with `srv` fallback) to register FCM token through `POST /api/notifications/native/register`. `POST /api/notifications/native/unpair` revokes paired native devices.
 - On mobile user agents, switching Notifications delivery mode from `none` to `all` or `keywords` shows a browser popup reminder: "To help insure notifications work, please remove your browser from sleep state."
 - On mobile touch devices, inbox rows in `ReadPage.tsx` support swipe actions: left swipe archives, right swipe deletes, visual cue appears at 15% swipe (yellow archive / red delete), inline row labels show `Archive` or `Delete` during swipe, action commits only when released past 50% swipe, and supported browsers receive vibration haptic cues at swipe hint/commit thresholds.
-- `ReadPage.tsx` exposes a small per-user `Haptics` toggle in the inbox action bar (touch devices) and persists the preference in browser local storage (`llama-read-swipe-haptics-enabled`).
+- `ReadPage.tsx` exposes a small per-user `Haptics` toggle in the inbox action bar (touch devices) and persists the preference in browser local storage (`kypost-read-swipe-haptics-enabled`).
 
 ### Page → API Mapping
 
@@ -31,7 +31,7 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 | `LoginPage.tsx` | `POST /api/auth/login`, `POST /api/auth/password` (`/login` sign-in plus protected `/password` change-password mode) |
 | `ReadPage.tsx` | `GET /api/inbox?limit=500&mailbox=<name>`, `POST /api/inbox/actions` (bulk inbox actions + read/unread state updates, includes current mailbox context; move actions are triggered by drag-drop from this page) |
 | `HealthPage.tsx` | `GET /api/health`, `GET /api/status` (includes `emailsProcessedLastHour`), `POST /api/health/repair` |
-| `ConfigPage.tsx` | `GET/PUT /api/config` (admin tabs), `GET/POST/DELETE /api/imap/config` (also carries SMTP host/port for sending), `POST /api/imap/test`, `POST /api/llama/test` (admin tab), `GET /api/labels` |
+| `ConfigPage.tsx` | `GET/PUT /api/config` (admin tabs), `GET/POST/DELETE /api/imap/config` (also carries SMTP host/port for sending), `POST /api/imap/test`, `POST /api/classifier/test` (admin tab), `GET /api/labels` |
 | `NotificationsPage.tsx` | `GET/PUT /api/notifications/preferences` (per-user delivery mode + keywords), `GET /api/config` (read-only, for label options), `GET /api/labels`, `GET /api/notifications/vapid-public-key`, `POST /api/notifications/subscriptions`, `POST /api/notifications/test`, `GET /api/notifications/pairing`, `POST /api/notifications/native/unpair`, `GET /api/notifications/native/devices`, `DELETE /api/notifications/native/devices` |
 | `ContactsPage.tsx` | `GET/POST /api/contacts`, `GET/PUT/DELETE /api/contacts/{id}`, `POST /api/contacts/dedupe` (the "Merge Duplicates" button — server-side duplicate merge, returns `{mergedCount, groups}`), `GET/POST/DELETE /api/contacts/dav-password` (app-specific CardDAV password; `POST` reveals the raw secret once) via `src/api/contacts.ts`. Mobile/CardDAV sync (`/api/contacts/sync`, `/dav/{username}/contacts/`) is not called from the web UI — see root `Mobile_Contact_Sync.md` |
 | `UsersPage.tsx` (admin only) | `GET/POST /api/users`, `PUT /api/users/{id}`, `POST /api/users/{id}/reset-password`, `POST /api/users/{id}/deactivate`, `POST /api/users/{id}/reactivate` via `src/api/users.ts` |
@@ -46,7 +46,7 @@ All code under `frontend/`. Produces a static bundle under `frontend/dist/` cons
 
 ### Theme System
 
-- Client theme selection is local-only and persisted in browser storage (`localStorage` key `llama-lab-theme`)
+- Client theme selection is local-only and persisted in browser storage (`localStorage` key `kypost-theme`)
 - Theme presets are owned by `src/theme.ts`
 - Preset names include: Dark Matter, Light Matter, Tropics, Tropic Night, Ocean, Coffee, White Cliffs, Cyber Punk, Neon Purple, Space, Sky, Forest, Sun
 - Theme initialization runs in `main.tsx` before rendering via `applyStoredTheme()`

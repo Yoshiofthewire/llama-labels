@@ -27,8 +27,8 @@ It polls unread mail, classifies messages, applies IMAP keywords, and includes a
 
 The container runs these processes:
 
-- API server: `llama-lab --mode server`
-- Polling daemon: `llama-lab --mode daemon`
+- API server: `kypost-server --mode server`
+- Polling daemon: `kypost-server --mode daemon`
 - Ollama service: `ollama serve`
 - One-shot startup pull: `ollama pull <configured model>`
 
@@ -90,7 +90,7 @@ docker compose up --build -d
 
 ## Users and Roles
 
-Accounts live in `/llama_lab/config/users.json` (roles: `admin`, `user`).
+Accounts live in `/kypost/config/users.json` (roles: `admin`, `user`).
 
 - Admins: manage users (create, change role, reset password, deactivate/reactivate) via the Manage Users page, view system logs, edit global settings (Application, Labels, Remote LLM), and trigger health repair.
 - Users: connect their own IMAP/SMTP account, read and label their own mail, pair their own devices, set their own notification preferences, and tune their own prompt.
@@ -99,8 +99,8 @@ Accounts live in `/llama_lab/config/users.json` (roles: `admin`, `user`).
 
 Per-user data layout:
 
-- `/llama_lab/config/users/<userID>/`: encrypted IMAP credentials, tuning prompt (`tuning.md`), notification preferences (`config.yaml`)
-- `/llama_lab/state/users/<userID>/`: mailbox checkpoint + processed set (`state.json`), decision history (`decisions.json`), push subscriptions, paired devices
+- `/kypost/config/users/<userID>/`: encrypted IMAP credentials, tuning prompt (`tuning.md`), notification preferences (`config.yaml`)
+- `/kypost/state/users/<userID>/`: mailbox checkpoint + processed set (`state.json`), decision history (`decisions.json`), push subscriptions, paired devices
 
 Upgrading from a single-admin install: on first start the legacy `admin.env` account is imported into `users.json`, and the legacy global mailbox state, IMAP credentials, tuning file, and notification preferences are copied into that admin's per-user directories. Legacy files are left in place but no longer read. There is no automated rollback; deleting `users.json` and the `users/` directories resets to a fresh multi-user state.
 
@@ -115,14 +115,14 @@ Common variables:
 
 - `WEB_PORT` (default `5866`)
 - `TZ` (default `America/New_York`)
-- `SECRET_DIR` (default `/llama_lab/private`)
+- `SECRET_DIR` (default `/kypost/private`)
 - `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
 - `OLLAMA_MODEL` (Compose default `gemma4:e4b`)
-- `TUNING_FILE` (default `/llama_lab/config/TUNING.md`)
+- `TUNING_FILE` (default `/kypost/config/TUNING.md`)
 - `OLLAMA_MODELS_HOST_DIR` (default `./share/ollama/models`)
-- `IMAP_CONFIG_FILE` (default `/llama_lab/private/imap-config.json`)
-- `IMAP_CONFIG_KEY_FILE` (default `/llama_lab/private/imap-config.key`)
-- `TOTP_SECRET_KEY_FILE` (default `/llama_lab/private/totp-secret.key`)
+- `IMAP_CONFIG_FILE` (default `/kypost/private/imap-config.json`)
+- `IMAP_CONFIG_KEY_FILE` (default `/kypost/private/imap-config.key`)
+- `TOTP_SECRET_KEY_FILE` (default `/kypost/private/totp-secret.key`)
 - `SERVER_BASE_URL` (optional but recommended for mobile pairing; public URL embedded as `srv` in QR and used to build `reg`)
 - `PAIRING_SECRET` (required for mobile pairing token signing/validation)
 - `PUSH_RELAY_URL` (optional; base URL of the central push relay Worker that delivers Android native push to FCM)
@@ -136,7 +136,7 @@ Notes:
 
 - `Dockerfile` sets a fallback model of `nemotron-3-nano:4b`.
 - `docker-compose.yml` overrides model default to `gemma4:e4b` unless you set `OLLAMA_MODEL`.
-- The image sets `OLLAMA_MODELS=/llama_lab/ollama-models`.
+- The image sets `OLLAMA_MODELS=/kypost/ollama-models`.
 
 Create model cache directory once before first run:
 
@@ -191,27 +191,27 @@ Maintainers/relay operators: deploy both Workers and mint per-server keys. See [
 
 Named volumes:
 
-- `llama_config` -> `/llama_lab/config`
-- `llama_private` -> `/llama_lab/private`
-- `llama_logs` -> `/llama_lab/logs`
-- `llama_state` -> `/llama_lab/state`
+- `kypost_config` -> `/kypost/config`
+- `kypost_private` -> `/kypost/private`
+- `kypost_logs` -> `/kypost/logs`
+- `kypost_state` -> `/kypost/state`
 
 Host bind mount:
 
-- `${OLLAMA_MODELS_HOST_DIR:-./share/ollama/models}` -> `/llama_lab/ollama-models`
+- `${OLLAMA_MODELS_HOST_DIR:-./share/ollama/models}` -> `/kypost/ollama-models`
 
 Important files:
 
-- `/llama_lab/config/config.yaml` (global system config)
-- `/llama_lab/config/users.json` (user accounts and roles)
-- `/llama_lab/config/users/<userID>/` (per-user IMAP credentials, tuning, notification preferences)
-- `/llama_lab/config/TUNING.md` (default tuning for new users)
-- `/llama_lab/config/notifications-vapid-private.pem` (shared web-push signing key)
-- `/llama_lab/private/imap-config.key` (master encryption key for stored IMAP credentials)
-- `/llama_lab/private/totp-secret.key` (master encryption key for stored TOTP secrets)
-- `/llama_lab/state/state.json` (global state: AI-credits flag)
-- `/llama_lab/state/users/<userID>/` (per-user mailbox state, decisions, devices, subscriptions)
-- `/llama_lab/config/admin.env` (legacy single-admin seed; imported once, then unused)
+- `/kypost/config/config.yaml` (global system config)
+- `/kypost/config/users.json` (user accounts and roles)
+- `/kypost/config/users/<userID>/` (per-user IMAP credentials, tuning, notification preferences)
+- `/kypost/config/TUNING.md` (default tuning for new users)
+- `/kypost/config/notifications-vapid-private.pem` (shared web-push signing key)
+- `/kypost/private/imap-config.key` (master encryption key for stored IMAP credentials)
+- `/kypost/private/totp-secret.key` (master encryption key for stored TOTP secrets)
+- `/kypost/state/state.json` (global state: AI-credits flag)
+- `/kypost/state/users/<userID>/` (per-user mailbox state, decisions, devices, subscriptions)
+- `/kypost/config/admin.env` (legacy single-admin seed; imported once, then unused)
 
 ## API Highlights
 
@@ -355,10 +355,10 @@ Useful runtime checks:
 
 ```bash
 docker compose ps
-docker compose logs -f llama-lab
-docker exec -it llama-lab ps aux
-docker exec -it llama-lab ls -la /llama_lab/config /llama_lab/state
-docker volume ls | grep llama
+docker compose logs -f kypost-server
+docker exec -it kypost-server ps aux
+docker exec -it kypost-server ls -la /kypost/config /kypost/state
+docker volume ls | grep kypost
 ```
 
 Persistence behavior:
@@ -370,7 +370,7 @@ Persistence behavior:
 
 ### Ollama or model issues
 
-- Check logs with `docker compose logs -f llama-lab`.
+- Check logs with `docker compose logs -f kypost-server`.
 - Confirm model pull completed for your configured `OLLAMA_MODEL`.
 - Restart if needed: `docker compose restart`.
 

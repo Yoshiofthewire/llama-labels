@@ -113,7 +113,7 @@ When the user requests a durable behavior change, record it here or in the relev
 
 ## Child DOX Index
 
-- `backend/` — Go 1.26.4 classification engine, HTTP API, IMAP adapter, Ollama adapter, poller, config, state, health, logging, redaction; produces the `llama-lab` binary. See [backend/AGENTS.md](backend/AGENTS.md). Contains nested child: `backend/internal/adapters/`.
+- `backend/` — Go 1.26.4 classification engine, HTTP API, IMAP adapter, Ollama adapter, poller, config, state, health, logging, redaction; produces the `kypost-server` binary. See [backend/AGENTS.md](backend/AGENTS.md). Contains nested child: `backend/internal/adapters/`.
 - `frontend/` — React 18 / TypeScript SPA for config, monitoring, decision audit, and log streaming. See [frontend/AGENTS.md](frontend/AGENTS.md).
 - `scripts/` — Container initialization, process orchestration (supervisord), and Ollama model management. See [scripts/AGENTS.md](scripts/AGENTS.md).
 - `share/` — Persistent Ollama model blob cache bind-mounted from the host; never committed to git. See [share/AGENTS.md](share/AGENTS.md).

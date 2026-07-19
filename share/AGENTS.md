@@ -12,7 +12,7 @@ Persistent Ollama model cache bind-mounted from the host into the container. Sur
 
 - `ollama/models/blobs/` — content-addressed model layer files (SHA256 filenames)
 - `ollama/models/manifests/` — model manifest metadata
-- Bind-mounted at container path `/llama_lab/ollama-models` via `OLLAMA_MODELS_HOST_DIR` in `docker-compose.yml`
+- Bind-mounted at container path `/kypost/ollama-models` via `OLLAMA_MODELS_HOST_DIR` in `docker-compose.yml`
 - Files are never committed to git (covered by `.gitignore`)
 - Do not manually add or remove blob files; use `pull-ollama-model.sh` or the Ollama CLI
 
