@@ -1845,15 +1845,18 @@ func (s *Server) handleNotificationNativeMode(w http.ResponseWriter, r *http.Req
 // app polling over plain HTTP — the App Pull path that bypasses the Cloudflare
 // relay and Firebase entirely. It is unauthenticated by web session; the device
 // proves ownership with the subscriber id + subscriber hash it received during
-// pairing (the same stable HMAC the register endpoint validates). The client
-// passes ?after=<cursor> to fetch only notifications newer than its last poll.
+// pairing (the same stable HMAC the register endpoint validates), sent via
+// the X-Kypost-Subscriber-Id/X-Kypost-Subscriber-Hash headers or, as a
+// legacy fallback, ?sub=&hash= query params (see
+// docs/superpowers/specs/2026-07-19-pairing-auth-headers-design.md). The
+// client passes ?after=<cursor> to fetch only notifications newer than its
+// last poll.
 func (s *Server) handleNotificationNativePull(w http.ResponseWriter, r *http.Request) {
 	if s.pairingSecret == "" {
 		http.Error(w, "pairing is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	subscriberID := strings.TrimSpace(r.URL.Query().Get("sub"))
-	subscriberHash := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hash")))
+	subscriberID, subscriberHash := pairingCredentialsFromRequest(r)
 	if subscriberID == "" || subscriberHash == "" {
 		http.Error(w, "sub and hash are required", http.StatusBadRequest)
 		return
