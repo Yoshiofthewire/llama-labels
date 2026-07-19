@@ -235,17 +235,20 @@ func (s *Server) mailFor(r *http.Request) (imapadapter.Client, error) {
 }
 
 // resolveMailAuthContext authenticates a mail request either by session
-// cookie (web) or by subscriberId/subscriberHash query params (mobile,
-// reusing the same pairing trust boundary as native push and contacts
-// sync — see contacts_handlers.go's handleContactsSync). Mobile never sees
-// or sets raw IMAP/SMTP credentials; it only acts on an account already
-// configured through the web UI.
+// cookie (web) or by subscriberId/subscriberHash pairing credentials
+// (mobile/native, reusing the same pairing trust boundary as native push
+// and contacts sync — see contacts_handlers.go's handleContactsSync).
+// Pairing credentials are read from the X-Kypost-Subscriber-Id/
+// X-Kypost-Subscriber-Hash headers, falling back to the legacy ?sub=&hash=
+// query params for clients that haven't updated yet (see
+// docs/superpowers/specs/2026-07-19-pairing-auth-headers-design.md). Mobile
+// never sees or sets raw IMAP/SMTP credentials; it only acts on an account
+// already configured through the web UI.
 func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {
 	if ac, ok := s.currentUser(r); ok {
 		return ac, nil
 	}
-	subscriberID := strings.TrimSpace(r.URL.Query().Get("sub"))
-	subscriberHash := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hash")))
+	subscriberID, subscriberHash := pairingCredentialsFromRequest(r)
 	if subscriberID == "" || subscriberHash == "" {
 		return AuthContext{}, errMailUnauthorized
 	}

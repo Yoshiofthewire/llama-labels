@@ -48,6 +48,31 @@ func TestMailAuthAcceptsSubscriberHash(t *testing.T) {
 	}
 }
 
+func TestMailAuthAcceptsSubscriberHashViaHeader(t *testing.T) {
+	srv := newTestServer(t)
+	store := testUserStore(t, srv)
+	subscriberID, err := store.GetOrCreateSubscriberID()
+	if err != nil {
+		t.Fatalf("GetOrCreateSubscriberID: %v", err)
+	}
+	hash := srv.pairingSubscriberHash(subscriberID)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/inbox/folders", nil)
+	req.Header.Set(headerSubscriberID, subscriberID)
+	req.Header.Set(headerSubscriberHash, hash)
+	srv.withMailAuth(srv.handleInboxFolders).ServeHTTP(rec, req)
+
+	// No query params and no cookie were set — auth must have succeeded via
+	// the headers alone. No IMAP account is configured for this test user,
+	// so the handler's own errIMAPNotConfigured path (400) is the expected
+	// "auth passed, nothing configured yet" signal — same as the
+	// query-param variant above.
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (imap not configured); body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
 func TestMailAuthRejectsInvalidHash(t *testing.T) {
 	srv := newTestServer(t)
 	store := testUserStore(t, srv)
