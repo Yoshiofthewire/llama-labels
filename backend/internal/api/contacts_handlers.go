@@ -354,7 +354,7 @@ type contactsSyncPushRequest struct {
 // pairing (GET /api/notifications/pairing / POST /api/notifications/native/register),
 // sent via the X-Kypost-Subscriber-Id/X-Kypost-Subscriber-Hash headers or,
 // as a legacy fallback, ?sub=&hash= query params (see
-// docs/superpowers/specs/2026-07-19-pairing-auth-headers-design.md).
+// docs/superpowers/plans/2026-07-19-pairing-auth-headers.md).
 func (s *Server) handleContactsSync(w http.ResponseWriter, r *http.Request) {
 	if s.pairingSecret == "" {
 		http.Error(w, "pairing is not configured", http.StatusServiceUnavailable)

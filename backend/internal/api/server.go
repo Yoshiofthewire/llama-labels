@@ -1848,7 +1848,7 @@ func (s *Server) handleNotificationNativeMode(w http.ResponseWriter, r *http.Req
 // pairing (the same stable HMAC the register endpoint validates), sent via
 // the X-Kypost-Subscriber-Id/X-Kypost-Subscriber-Hash headers or, as a
 // legacy fallback, ?sub=&hash= query params (see
-// docs/superpowers/specs/2026-07-19-pairing-auth-headers-design.md). The
+// docs/superpowers/plans/2026-07-19-pairing-auth-headers.md). The
 // client passes ?after=<cursor> to fetch only notifications newer than its
 // last poll.
 func (s *Server) handleNotificationNativePull(w http.ResponseWriter, r *http.Request) {

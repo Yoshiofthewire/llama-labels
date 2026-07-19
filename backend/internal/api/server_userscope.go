@@ -241,7 +241,7 @@ func (s *Server) mailFor(r *http.Request) (imapadapter.Client, error) {
 // Pairing credentials are read from the X-Kypost-Subscriber-Id/
 // X-Kypost-Subscriber-Hash headers, falling back to the legacy ?sub=&hash=
 // query params for clients that haven't updated yet (see
-// docs/superpowers/specs/2026-07-19-pairing-auth-headers-design.md). Mobile
+// docs/superpowers/plans/2026-07-19-pairing-auth-headers.md). Mobile
 // never sees or sets raw IMAP/SMTP credentials; it only acts on an account
 // already configured through the web UI.
 func (s *Server) resolveMailAuthContext(r *http.Request) (AuthContext, error) {

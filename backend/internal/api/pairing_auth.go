@@ -8,7 +8,7 @@ import (
 // Headers a paired native client (Android/Linux/Mac) sends its pairing
 // credentials in. Preferred over the legacy ?sub=&hash= query params, which
 // stay supported as a fallback for clients that haven't updated yet — see
-// docs/superpowers/specs/2026-07-19-pairing-auth-headers-design.md.
+// docs/superpowers/plans/2026-07-19-pairing-auth-headers.md.
 const (
 	headerSubscriberID   = "X-Kypost-Subscriber-Id"
 	headerSubscriberHash = "X-Kypost-Subscriber-Hash"
