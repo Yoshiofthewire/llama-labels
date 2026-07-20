@@ -1,5 +1,5 @@
 {
-  "name": "llama-labels-push-relay-apns",
+  "name": "kypost-push-relay-apns",
   "version": "1.0.0",
   "private": true,
   "description": "Cloudflare Worker that delivers KyPost native push notifications to iOS devices via Apple Push Notification service (APNs).",

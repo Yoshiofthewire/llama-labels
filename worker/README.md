@@ -167,13 +167,13 @@ with `{"error":"rate limit exceeded","window":"minute","limit":10,"retryAfterSec
 ## Usage
 
 Each accepted send writes one data point to the `USAGE_ANALYTICS` Analytics
-Engine dataset (`llama_push_usage`) — off the KV write path — with the key id,
+Engine dataset (`kypost_push_usage`) — off the KV write path — with the key id,
 label, and source. Query totals and last-seen per key via the Analytics Engine
 SQL API, e.g.:
 
 ```sql
 SELECT blob1 AS key_id, sum(_sample_interval * double1) AS sends, max(timestamp) AS last_seen
-FROM llama_push_usage GROUP BY key_id ORDER BY sends DESC
+FROM kypost_push_usage GROUP BY key_id ORDER BY sends DESC
 ```
 
 The admin list no longer carries usage counts or `lastUsedAt` — that all lives in

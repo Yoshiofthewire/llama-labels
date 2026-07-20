@@ -15,7 +15,7 @@ import (
 
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 
-	"llama-lab/backend/internal/mailmsg"
+	"kypost-server/backend/internal/mailmsg"
 )
 
 // envelopeHeaderOrder lists the outer RFC 5322 headers preserved verbatim on

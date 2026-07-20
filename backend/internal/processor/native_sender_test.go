@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"llama-lab/backend/internal/state"
+	"kypost-server/backend/internal/state"
 )
 
 func TestRelaySenderSendSuccess(t *testing.T) {

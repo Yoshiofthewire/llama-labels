@@ -1,4 +1,4 @@
-name = "llama-labels-push-relay-apns"
+name = "kypost-push-relay-apns"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
 
@@ -53,7 +53,7 @@ simple = { limit = 5, period = 60 }
 # Query lifetime totals per key via the Analytics Engine SQL API. Created on deploy.
 [[analytics_engine_datasets]]
 binding = "USAGE_ANALYTICS"
-dataset = "llama_push_usage_apns"
+dataset = "kypost_push_usage_apns"
 
 # Secrets (set with `npx wrangler secret put <NAME>`, never commit them):
 #   APNS_AUTH_KEY      - .p8 PEM private key contents from Apple Developer portal (preserve newlines)

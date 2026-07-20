@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"llama-lab/backend/internal/users"
+	"kypost-server/backend/internal/users"
 )
 
 // authRequestAs simulates an authenticated request the way a real browser
@@ -21,12 +21,17 @@ func authRequestAs(s *Server, req *http.Request, userID string) {
 	s.mu.Lock()
 	s.sessions[token] = Session{UserID: userID, ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: csrfToken}
 	s.mu.Unlock()
-	req.AddCookie(&http.Cookie{Name: "llama_session", Value: token})
+	// Represent a fully-onboarded session: users are created with
+	// MustChangePassword=true, which is now enforced server-side (see withAuth),
+	// so clear it here to model a user past first login. Tests that specifically
+	// exercise the must-change gate set the flag themselves.
+	_, _ = s.users.ClearMustChangePassword(userID)
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
 	req.Header.Set("X-CSRF-Token", csrfToken)
 }
 
 // findCookie returns the cookie named name from cookies, or nil. Login now
-// always sets two cookies (llama_session + the non-HttpOnly csrf_token used
+// always sets two cookies (kypost_session + the non-HttpOnly csrf_token used
 // by csrfCheckOK), so tests that need the session cookie specifically must
 // look it up by name rather than assume it's the only one.
 func findCookie(cookies []*http.Cookie, name string) *http.Cookie {
@@ -97,9 +102,9 @@ func TestLoginMeLogoutFlow(t *testing.T) {
 		t.Fatalf("login: status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	cookies := rec.Result().Cookies()
-	sessionCookie := findCookie(cookies, "llama_session")
+	sessionCookie := findCookie(cookies, "kypost_session")
 	if sessionCookie == nil || findCookie(cookies, "csrf_token") == nil {
-		t.Fatalf("expected both llama_session and csrf_token cookies, got %+v", cookies)
+		t.Fatalf("expected both kypost_session and csrf_token cookies, got %+v", cookies)
 	}
 
 	rec = doJSON(srv, srv.handleMe, http.MethodGet, "/api/auth/me", nil, sessionCookie)
@@ -147,13 +152,13 @@ func TestSessionCookieSecureFlag(t *testing.T) {
 			t.Fatalf("login: status = %d, body=%s", rec.Code, rec.Body.String())
 		}
 		cookies := rec.Result().Cookies()
-		sessionCookie := findCookie(cookies, "llama_session")
+		sessionCookie := findCookie(cookies, "kypost_session")
 		csrfCookie := findCookie(cookies, "csrf_token")
 		if sessionCookie == nil || csrfCookie == nil {
-			t.Fatalf("expected llama_session and csrf_token cookies, got %+v", cookies)
+			t.Fatalf("expected kypost_session and csrf_token cookies, got %+v", cookies)
 		}
 		if sessionCookie.Secure != csrfCookie.Secure {
-			t.Fatalf("llama_session.Secure=%v but csrf_token.Secure=%v, want matching", sessionCookie.Secure, csrfCookie.Secure)
+			t.Fatalf("kypost_session.Secure=%v but csrf_token.Secure=%v, want matching", sessionCookie.Secure, csrfCookie.Secure)
 		}
 		return sessionCookie
 	}
@@ -279,7 +284,7 @@ func TestCSRFProtectionOnCookieAuthedMutations(t *testing.T) {
 	srv.mu.Lock()
 	srv.sessions[token] = Session{UserID: u.ID, ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: "the-real-csrf-token"}
 	srv.mu.Unlock()
-	req.AddCookie(&http.Cookie{Name: "llama_session", Value: token})
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
 	rec := httptest.NewRecorder()
 	protected(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -288,7 +293,7 @@ func TestCSRFProtectionOnCookieAuthedMutations(t *testing.T) {
 
 	// Cookie present, wrong CSRF header: also rejected.
 	req = httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(body))
-	req.AddCookie(&http.Cookie{Name: "llama_session", Value: token})
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
 	req.Header.Set("X-CSRF-Token", "not-the-real-token")
 	rec = httptest.NewRecorder()
 	protected(rec, req)
@@ -298,7 +303,7 @@ func TestCSRFProtectionOnCookieAuthedMutations(t *testing.T) {
 
 	// Cookie present, matching CSRF header: allowed through.
 	req = httptest.NewRequest(http.MethodPost, "/api/auth/password", bytes.NewReader(body))
-	req.AddCookie(&http.Cookie{Name: "llama_session", Value: token})
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
 	req.Header.Set("X-CSRF-Token", "the-real-csrf-token")
 	rec = httptest.NewRecorder()
 	protected(rec, req)

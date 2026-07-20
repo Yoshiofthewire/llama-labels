@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	imapadapter "llama-lab/backend/internal/adapters/imap"
-	"llama-lab/backend/internal/config"
-	"llama-lab/backend/internal/mailcache"
-	"llama-lab/backend/internal/mailmsg"
+	imapadapter "kypost-server/backend/internal/adapters/imap"
+	"kypost-server/backend/internal/config"
+	"kypost-server/backend/internal/mailcache"
+	"kypost-server/backend/internal/mailmsg"
 )
 
 // fakeMailClient is a configurable imapadapter.Client for exercising

@@ -98,7 +98,7 @@ function buildNativePairingLink(pairing: PairingStatusResponse): string {
   if (pairing.pairingToken) {
     params.set("pt", pairing.pairingToken);
   }
-  return `llamalabels://native-pair?${params.toString()}`;
+  return `kypost://native-pair?${params.toString()}`;
 }
 
 function clamp(value: number, min: number, max: number): number {

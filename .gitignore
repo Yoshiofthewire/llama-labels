@@ -31,14 +31,14 @@ backend/main
 scripts/node_modules/
 
 # Local runtime artifacts
-llama_lab/
+kypost/
 share/ollama/models/
 *.pid
 
 # Auth and secret artifacts
 **/auth.json
 **/*_auth.json
-**/llama-auth.json
+**/kypost-auth.json
 **/admin.env
 **/google-services.json
 **/GoogleService-Info.plist

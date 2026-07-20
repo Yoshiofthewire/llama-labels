@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	imapadapter "llama-lab/backend/internal/adapters/imap"
+	imapadapter "kypost-server/backend/internal/adapters/imap"
 )
 
 func TestEvaluate_AllofMatchesAllConditions(t *testing.T) {

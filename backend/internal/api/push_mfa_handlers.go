@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strings"
 
-	"llama-lab/backend/internal/mfa"
-	"llama-lab/backend/internal/processor"
-	"llama-lab/backend/internal/state"
+	"kypost-server/backend/internal/mfa"
+	"kypost-server/backend/internal/processor"
+	"kypost-server/backend/internal/state"
 )
 
 // approverDevices returns the devices eligible to approve a push-2FA challenge
@@ -115,7 +115,7 @@ func (s *Server) handleNativeDeviceMFA(w http.ResponseWriter, r *http.Request) {
 // processor.SendNativePushToDevices — the same pull-mode fallback, stale-device
 // cleanup, and health recording every other native push in this app gets —
 // scoped to the approver-filtered device list rather than every paired device.
-// The data payload is the contract a future llama-mobile build must recognize.
+// The data payload is the contract a future kypost-android build must recognize.
 //
 // UnifiedPush devices are excluded from MFA challenges pending end-to-end encryption
 // support; MFA metadata is sensitive and should not traverse unencrypted public

@@ -8,8 +8,8 @@ import (
 	"path"
 	"testing"
 
-	"llama-lab/backend/internal/contacts"
-	"llama-lab/backend/internal/groups"
+	"kypost-server/backend/internal/contacts"
+	"kypost-server/backend/internal/groups"
 
 	"github.com/emersion/go-vcard"
 	"github.com/emersion/go-webdav"

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"llama-lab/backend/internal/contacts"
-	"llama-lab/backend/internal/pgpmail"
+	"kypost-server/backend/internal/contacts"
+	"kypost-server/backend/internal/pgpmail"
 )
 
 func TestPGPQRTokenAndKeyRoundTrip(t *testing.T) {
@@ -122,7 +122,7 @@ func TestPGPQREndpointsFailClosedOnUnsetPairingSecret(t *testing.T) {
 // TestPGPQRTokenAcceptsDeviceCredentials drives the endpoint through the
 // server's real route table (not a hand-wired middleware call) so it fails
 // if GET /api/pgp/qr/token is ever wired back to withAuth instead of
-// withMailAuth. llama-mobile's "My QR Code" screen has no session cookie —
+// withMailAuth. kypost-android's "My QR Code" screen has no session cookie —
 // its own device pairing credential is all it has — so this endpoint must
 // accept it or that screen can never authenticate at all.
 func TestPGPQRTokenAcceptsDeviceCredentials(t *testing.T) {

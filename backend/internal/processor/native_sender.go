@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"llama-lab/backend/internal/fsutil"
-	"llama-lab/backend/internal/logging"
-	"llama-lab/backend/internal/state"
+	"kypost-server/backend/internal/fsutil"
+	"kypost-server/backend/internal/logging"
+	"kypost-server/backend/internal/state"
 )
 
 var ErrNativeDeviceStale = errors.New("native device token is stale")
@@ -90,7 +90,7 @@ func relayKeyFilePathWithPrefix(prefix string) string {
 	}
 	dir := strings.TrimSpace(os.Getenv("SECRET_DIR"))
 	if dir == "" {
-		dir = "/llama_lab/private"
+		dir = "/kypost/private"
 	}
 	// e.g. "push_relay_key" for PUSH_RELAY, "apns_relay_key" for APNS_RELAY.
 	name := strings.ToLower(strings.TrimSuffix(prefix, "_RELAY")) + "_relay_key"
@@ -134,7 +134,7 @@ func resolveRelayKeyWithPrefix(log *logging.Logger, prefix, relayURL string, cli
 func registerWithRelay(relayURL string, client *http.Client) (string, error) {
 	label, _ := os.Hostname()
 	if strings.TrimSpace(label) == "" {
-		label = "llama-lab"
+		label = "kypost-server"
 	}
 	body, err := json.Marshal(map[string]string{"label": label})
 	if err != nil {

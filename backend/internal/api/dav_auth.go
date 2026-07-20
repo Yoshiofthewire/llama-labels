@@ -5,11 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"llama-lab/backend/internal/users"
+	"kypost-server/backend/internal/users"
 )
 
 // davCredentialTTL bounds how long a verified Basic Auth credential is
@@ -79,7 +80,21 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		username, password, ok := r.BasicAuth()
 		if !ok || strings.TrimSpace(username) == "" || password == "" {
+			// A missing-credentials 401 is the normal Basic Auth challenge
+			// round every client starts with, so it never counts as a strike.
 			s.requireDAVAuth(w)
+			return
+		}
+
+		// Per-IP lockout: unlike login, every failed DAV attempt below pays a
+		// full scrypt verification, so an uncapped attacker is a CPU-exhaustion
+		// vector even though guessing the server-generated password is
+		// hopeless. Checked before the credential cache so a locked-out IP is
+		// refused outright.
+		ip := clientIP(r)
+		if allowed, retryAfter := s.davLockout.allowed(ip); !allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
+			http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 			return
 		}
 
@@ -90,15 +105,18 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 
 		u, err := s.users.GetByUsername(username)
 		if err != nil || !u.Active {
+			s.davLockout.recordFailure(ip)
 			s.requireDAVAuth(w)
 			return
 		}
 		passFile, exists, err := s.readDAVPassword(u.ID)
 		if err != nil || !exists || !users.VerifySecretHash(passFile.Hash, password) {
+			s.davLockout.recordFailure(ip)
 			s.requireDAVAuth(w)
 			return
 		}
 
+		s.davLockout.recordSuccess(ip)
 		ac := AuthContext{UserID: u.ID, Username: u.Username, Role: u.Role}
 		s.davCredentials.put(username, password, ac)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authContextKey{}, ac)))
@@ -106,6 +124,6 @@ func (s *Server) withDAVBasicAuth(next http.Handler) http.Handler {
 }
 
 func (s *Server) requireDAVAuth(w http.ResponseWriter) {
-	w.Header().Set("WWW-Authenticate", `Basic realm="llama-mail"`)
+	w.Header().Set("WWW-Authenticate", `Basic realm="kypost"`)
 	http.Error(w, "unauthorized", http.StatusUnauthorized)
 }

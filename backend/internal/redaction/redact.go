@@ -3,7 +3,7 @@ package redaction
 import (
 	"regexp"
 
-	"llama-lab/backend/internal/config"
+	"kypost-server/backend/internal/config"
 )
 
 type compiledPattern struct {

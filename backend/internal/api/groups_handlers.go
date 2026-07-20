@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"llama-lab/backend/internal/groups"
+	"kypost-server/backend/internal/groups"
 )
 
 type groupPayload struct {

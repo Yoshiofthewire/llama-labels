@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"llama-lab/backend/internal/users"
+	"kypost-server/backend/internal/users"
 )
 
 // withAdmin layers an admin-role requirement on top of withAuth. Handlers
@@ -126,6 +126,9 @@ func (s *Server) handleUsersResetPassword(w http.ResponseWriter, r *http.Request
 	// no "current session" to keep — every one of the target's live sessions
 	// (e.g. a stolen cookie the reset is meant to shut out) is revoked.
 	s.revokeUserSessions(u.ID, "")
+	// Paired devices carry their own secret independent of the password, so a
+	// reset must revoke them explicitly or the device keeps full access.
+	s.revokeUserDevices(u.ID)
 	s.logger.Info("user password reset by admin", "user_id", u.ID)
 	writeJSON(w, http.StatusOK, u.Public())
 }
@@ -144,6 +147,12 @@ func (s *Server) handleUsersDeactivate(w http.ResponseWriter, r *http.Request) {
 		writeUserStoreError(w, err)
 		return
 	}
+	// Cut off both credential types the account holds: web sessions and paired
+	// devices. The device-auth path also rejects inactive accounts live (see
+	// deviceAuthFromRequest), but purging here makes revocation explicit and
+	// durable across any future reactivation.
+	s.revokeUserSessions(u.ID, "")
+	s.revokeUserDevices(u.ID)
 	s.logger.Info("user deactivated", "user_id", u.ID)
 	writeJSON(w, http.StatusOK, u.Public())
 }
@@ -170,6 +179,9 @@ func (s *Server) handleUsersClearMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.revokeUserSessions(u.ID, "")
+	// Clearing MFA is an account-recovery action; revoke paired devices too so
+	// a device paired under the old trust state can't retain access.
+	s.revokeUserDevices(u.ID)
 	s.logger.Info("user MFA cleared by admin", "user_id", u.ID)
 	writeJSON(w, http.StatusOK, u.Public())
 }

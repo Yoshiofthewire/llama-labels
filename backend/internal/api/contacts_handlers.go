@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"llama-lab/backend/internal/contacts"
-	"llama-lab/backend/internal/fsutil"
-	"llama-lab/backend/internal/users"
+	"kypost-server/backend/internal/contacts"
+	"kypost-server/backend/internal/fsutil"
+	"kypost-server/backend/internal/users"
 )
 
 // contactPayload is the client-supplied subset of contacts.Contact — it omits

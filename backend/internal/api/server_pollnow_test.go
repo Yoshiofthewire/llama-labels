@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"llama-lab/backend/internal/adapters/llama"
-	"llama-lab/backend/internal/config"
-	"llama-lab/backend/internal/processor"
-	"llama-lab/backend/internal/state"
+	"kypost-server/backend/internal/adapters/classifier"
+	"kypost-server/backend/internal/config"
+	"kypost-server/backend/internal/processor"
+	"kypost-server/backend/internal/state"
 )
 
 func TestHandlePollNowRejectsNonAdmin(t *testing.T) {
@@ -55,8 +55,8 @@ func TestHandlePollNowTriggersPoll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("state.New: %v", err)
 	}
-	llamaClient := llama.NewHTTPClient("http://127.0.0.1:0", "", "", "", time.Second)
-	poller, err := processor.New(config.Default(), srv.logger, globalStore, srv.users, srv.stateDir, srv.configDir, srv.health, llamaClient)
+	classifierClient := classifier.NewHTTPClient("http://127.0.0.1:0", "", "", "", time.Second)
+	poller, err := processor.New(config.Default(), srv.logger, globalStore, srv.users, srv.stateDir, srv.configDir, srv.health, classifierClient)
 	if err != nil {
 		t.Fatalf("processor.New: %v", err)
 	}

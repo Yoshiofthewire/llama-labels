@@ -11,7 +11,7 @@ import (
 
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 
-	"llama-lab/backend/internal/cryptutil"
+	"kypost-server/backend/internal/cryptutil"
 )
 
 // Identity holds one OpenPGP keypair loaded in memory: a user's own private

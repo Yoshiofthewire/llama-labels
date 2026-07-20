@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"llama-lab/backend/internal/cryptutil"
-	"llama-lab/backend/internal/fsutil"
+	"kypost-server/backend/internal/cryptutil"
+	"kypost-server/backend/internal/fsutil"
 )
 
 // PickupRecord is one queued message a recipient without a known PGP key

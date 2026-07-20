@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	imapadapter "llama-lab/backend/internal/adapters/imap"
-	"llama-lab/backend/internal/mailmsg"
+	imapadapter "kypost-server/backend/internal/adapters/imap"
+	"kypost-server/backend/internal/mailmsg"
 )
 
 func attachmentFake() *fakeMailClient {

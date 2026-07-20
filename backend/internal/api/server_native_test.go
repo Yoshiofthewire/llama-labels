@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"llama-lab/backend/internal/config"
-	"llama-lab/backend/internal/health"
-	"llama-lab/backend/internal/logging"
-	"llama-lab/backend/internal/pgpmail"
-	"llama-lab/backend/internal/state"
-	"llama-lab/backend/internal/users"
+	"kypost-server/backend/internal/config"
+	"kypost-server/backend/internal/health"
+	"kypost-server/backend/internal/logging"
+	"kypost-server/backend/internal/pgpmail"
+	"kypost-server/backend/internal/state"
+	"kypost-server/backend/internal/users"
 )
 
 func newTestServer(t *testing.T) *Server {
@@ -43,7 +43,7 @@ func newTestServer(t *testing.T) *Server {
 	srv.configDir = configDir
 	srv.totpSecretKeyPath = filepath.Join(configDir, "totp-secret.key")
 	srv.pgpPrivateKeyPath = filepath.Join(configDir, "pgp-private-key.key")
-	// NewServer wires pickupStore to the process-default /llama_lab/...
+	// NewServer wires pickupStore to the process-default /kypost/...
 	// paths at construction time, before stateDir above gets overridden, so
 	// it must be rebuilt here against the temp dirs or pickup tests would
 	// try to write outside the sandbox.
@@ -75,7 +75,10 @@ func authRequest(s *Server, req *http.Request) {
 	s.mu.Lock()
 	s.sessions[token] = Session{UserID: all[0].ID, ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: csrfToken}
 	s.mu.Unlock()
-	req.AddCookie(&http.Cookie{Name: "llama_session", Value: token})
+	// Model an onboarded session; the must-change gate (withAuth) has its own
+	// dedicated test.
+	_, _ = s.users.ClearMustChangePassword(all[0].ID)
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
 	req.Header.Set("X-CSRF-Token", csrfToken)
 }
 

@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	imapadapter "llama-lab/backend/internal/adapters/imap"
-	"llama-lab/backend/internal/config"
-	"llama-lab/backend/internal/logging"
-	"llama-lab/backend/internal/rules"
-	"llama-lab/backend/internal/state"
+	imapadapter "kypost-server/backend/internal/adapters/imap"
+	"kypost-server/backend/internal/config"
+	"kypost-server/backend/internal/logging"
+	"kypost-server/backend/internal/rules"
+	"kypost-server/backend/internal/state"
 )
 
 // TestMailCacheEntriesFromMessages covers the pure conversion tickUser uses
@@ -299,7 +299,7 @@ func (c *noopMailClient) SaveSent(context.Context, imapadapter.DraftMessage) err
 
 // TestHandleMessage_StopRuleShortCircuitsClassification proves a matched
 // "stop" rule skips classifyWithRetry entirely, rather than merely skipping
-// its result: the Poller's llama client is left nil, so if handleMessage
+// its result: the Poller's classifier field is left nil, so if handleMessage
 // called classifyWithRetry anyway, HTTPClient.Classify would panic on a nil
 // receiver dereference (c.baseURL inside ensureWarm) and fail this test.
 // The message must still be marked processed and recorded as a Decision.
@@ -310,7 +310,7 @@ func TestHandleMessage_StopRuleShortCircuitsClassification(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = logger.Close() })
 
-	p := &Poller{log: logger} // llama intentionally left nil
+	p := &Poller{log: logger} // classifier intentionally left nil
 
 	store, err := state.New(t.TempDir())
 	if err != nil {
@@ -369,7 +369,7 @@ func TestHandleMessage_StopRuleActionFailureIsSurfaced(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = logger.Close() })
 
-	p := &Poller{log: logger} // llama intentionally left nil
+	p := &Poller{log: logger} // classifier intentionally left nil
 
 	store, err := state.New(t.TempDir())
 	if err != nil {
@@ -438,7 +438,7 @@ func TestHandleMessage_StopRuleActionFailureIsSurfaced(t *testing.T) {
 // TestHandleMessage_NonMatchingRuleStillClassifies is the mirror check:
 // when no rule matches, handleMessage must still reach classification. It
 // can't call the real Ollama HTTP path in a unit test, so it asserts the
-// weaker but still meaningful property that a nil llama client *does*
+// weaker but still meaningful property that a nil classifier client *does*
 // panic once rule evaluation is out of the way — proving the earlier
 // no-panic result above was actually caused by the stop short-circuit and
 // not by some unrelated reason classifyWithRetry never runs.
@@ -449,7 +449,7 @@ func TestHandleMessage_NonMatchingRuleStillClassifies(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = logger.Close() })
 
-	p := &Poller{log: logger} // llama intentionally left nil
+	p := &Poller{log: logger} // classifier intentionally left nil
 
 	store, err := state.New(t.TempDir())
 	if err != nil {
@@ -477,7 +477,7 @@ func TestHandleMessage_NonMatchingRuleStillClassifies(t *testing.T) {
 
 	defer func() {
 		if r := recover(); r == nil {
-			t.Fatal("expected classifyWithRetry to be reached (and panic on the nil llama client) when no rule matches")
+			t.Fatal("expected classifyWithRetry to be reached (and panic on the nil classifier client) when no rule matches")
 		}
 	}()
 	_ = p.handleMessage(context.Background(), uc, msg)
@@ -503,7 +503,7 @@ func TestHandleMessage_AutoLabelDisabledUsesConfiguredLabel(t *testing.T) {
 		t.Fatalf("state.New: %v", err)
 	}
 
-	p := &Poller{log: logger} // llama intentionally left nil; disabled path never calls it
+	p := &Poller{log: logger} // classifier intentionally left nil; disabled path never calls it
 	p.cfg.Labels.Allowlist = []string{"Work", "Bills"}
 
 	mail := &noopMailClient{}

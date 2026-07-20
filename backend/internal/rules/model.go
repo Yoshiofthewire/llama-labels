@@ -1,4 +1,4 @@
-// Package rules implements llama-labels' filter-rules engine: a structured
+// Package rules implements KyPost's filter-rules engine: a structured
 // Rule model shared by a graphical builder and a hand-rolled Sieve-subset
 // text editor (sieve.go), evaluated by engine.go both automatically (the
 // poller, on new mail) and on demand (a manual "run rules now" backfill).

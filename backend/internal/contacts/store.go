@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"llama-lab/backend/internal/fsutil"
+	"kypost-server/backend/internal/fsutil"
 )
 
 // defaultTombstoneRetention is how long a deleted contact's tombstone is kept

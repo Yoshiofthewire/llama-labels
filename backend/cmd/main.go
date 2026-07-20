@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	"llama-lab/backend/internal/app"
+	"kypost-server/backend/internal/app"
 )
 
 func main() {

@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"llama-lab/backend/internal/fsutil"
+	"kypost-server/backend/internal/fsutil"
 
 	"golang.org/x/crypto/scrypt"
 )
@@ -454,6 +454,16 @@ func (s *Store) SetPassword(id, newPassword string, requireChange bool) (User, e
 	return s.mutate(id, func(u *User) error {
 		u.PasswordHash = hash
 		u.MustChangePassword = requireChange
+		return nil
+	})
+}
+
+// ClearMustChangePassword clears the first-login password-change requirement
+// without touching the password hash. Used by the password-change flow's
+// callers and available for administrative bookkeeping.
+func (s *Store) ClearMustChangePassword(id string) (User, error) {
+	return s.mutate(id, func(u *User) error {
+		u.MustChangePassword = false
 		return nil
 	})
 }

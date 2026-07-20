@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"llama-lab/backend/internal/users"
+	"kypost-server/backend/internal/users"
 )
 
 func davAuthedRequest(ac AuthContext, method, target string, body *bytes.Reader) *http.Request {

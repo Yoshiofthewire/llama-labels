@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"llama-lab/backend/internal/contacts"
-	"llama-lab/backend/internal/groups"
+	"kypost-server/backend/internal/contacts"
+	"kypost-server/backend/internal/groups"
 
 	"github.com/emersion/go-vcard"
 	"github.com/emersion/go-webdav"
@@ -138,7 +138,7 @@ func (b *contactsDAVBackend) ListAddressBooks(ctx context.Context) ([]carddav.Ad
 	return []carddav.AddressBook{{
 		Path:        b.addressBookPath(ac),
 		Name:        "Contacts",
-		Description: "Llama Mail contacts",
+		Description: "KyPost contacts",
 	}}, nil
 }
 

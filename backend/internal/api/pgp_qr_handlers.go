@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"llama-lab/backend/internal/contacts"
+	"kypost-server/backend/internal/contacts"
 )
 
 // handlePGPQRToken mints a short-TTL token (session auth) that a scanning

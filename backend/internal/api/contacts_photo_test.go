@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"llama-lab/backend/internal/contacts"
+	"kypost-server/backend/internal/contacts"
 )
 
 // TestContactPhotoGetAcceptsDeviceCredentials drives the endpoint through the

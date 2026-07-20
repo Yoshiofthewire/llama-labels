@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"llama-lab/backend/internal/contacts"
-	"llama-lab/backend/internal/pgpmail"
+	"kypost-server/backend/internal/contacts"
+	"kypost-server/backend/internal/pgpmail"
 )
 
 func TestPGPKeyserverLookupSuccess(t *testing.T) {

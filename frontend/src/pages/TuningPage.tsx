@@ -61,8 +61,8 @@ export function TuningPage() {
       const result = await putJSON<TuningSaveResponse>("/api/tuning", { content: tuningText });
       setTuningStatus(
         result.restartOk === false
-          ? `Tuning saved, but Llama restart needs attention: ${result.restartError ?? "unknown restart failure"}`
-          : "TUNING.md saved and Llama restarted."
+          ? `Tuning saved, but classifier restart needs attention: ${result.restartError ?? "unknown restart failure"}`
+          : "TUNING.md saved and classifier restarted."
       );
     } catch {
       setTuningStatus("Failed to save tuning file.");

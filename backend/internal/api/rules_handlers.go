@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	imapadapter "llama-lab/backend/internal/adapters/imap"
-	"llama-lab/backend/internal/rules"
+	imapadapter "kypost-server/backend/internal/adapters/imap"
+	"kypost-server/backend/internal/rules"
 )
 
 type rulePayload struct {

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"llama-lab/backend/internal/fsutil"
+	"kypost-server/backend/internal/fsutil"
 )
 
 // Store is one user's filter-rule list, persisted as rules.json in the

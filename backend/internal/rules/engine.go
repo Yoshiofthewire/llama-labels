@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	imapadapter "llama-lab/backend/internal/adapters/imap"
+	imapadapter "kypost-server/backend/internal/adapters/imap"
 )
 
 // EvalInput is the message data a rule's Match tree is evaluated against.

@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"llama-lab/backend/internal/fsutil"
+	"kypost-server/backend/internal/fsutil"
 )
 
 // EncryptedPayload is the on-disk envelope format for an AES-GCM sealed

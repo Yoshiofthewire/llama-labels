@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	imapadapter "llama-lab/backend/internal/adapters/imap"
-	"llama-lab/backend/internal/rules"
+	imapadapter "kypost-server/backend/internal/adapters/imap"
+	"kypost-server/backend/internal/rules"
 )
 
 func TestRulesCreateListUpdateDelete(t *testing.T) {

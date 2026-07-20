@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
-	"llama-lab/backend/internal/pgpmail"
+	"kypost-server/backend/internal/pgpmail"
 )
 
 // keyserverBaseURL is a var (not const) so tests can point it at a local

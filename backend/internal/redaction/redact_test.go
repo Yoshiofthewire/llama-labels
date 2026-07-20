@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"llama-lab/backend/internal/config"
+	"kypost-server/backend/internal/config"
 )
 
 // Regression test for a bug where the default patterns were defined with

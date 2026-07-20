@@ -89,7 +89,7 @@ function textToMapping(raw: string): Record<string, string[]> {
 }
 
 export function ConfigPage() {
-  const testPrompt = "Email Address: test@example.com Subject Line: Llama connectivity test Return only the label Updates";
+  const testPrompt = "Email Address: test@example.com Subject Line: Classifier connectivity test Return only the label Updates";
 
   // Application, Labels, and Remote LLM settings are global/system-owned
   // and admin-only; every user manages their own Email (IMAP/SMTP) settings.
@@ -116,8 +116,8 @@ export function ConfigPage() {
   const [imapMessage, setImapMessage] = useState("");
   const [imapBusy, setImapBusy] = useState(false);
 
-  const [llamaTestBusy, setLlamaTestBusy] = useState(false);
-  const [llamaTestResult, setLlamaTestResult] = useState("");
+  const [classifierTestBusy, setClassifierTestBusy] = useState(false);
+  const [classifierTestResult, setClassifierTestResult] = useState("");
   const [activeTab, setActiveTab] = useState<"application" | "email" | "carddav" | "labels" | "llm">(isAdmin ? "application" : "email");
   const configStatusTone = configStatus.toLowerCase().includes("failed") ? "notice notice-error" : "notice notice-success";
 
@@ -323,26 +323,26 @@ export function ConfigPage() {
     }
   }
 
-  async function runLlamaTest() {
-    setLlamaTestBusy(true);
-    setLlamaTestResult("");
+  async function runClassifierTest() {
+    setClassifierTestBusy(true);
+    setClassifierTestResult("");
     try {
       const result = await postJSON<{ ok: boolean; response?: string; error?: string; baseUrl?: string; path?: string }>(
-        "/api/llama/test",
+        "/api/classifier/test",
         { prompt: testPrompt }
       );
       if (!result.ok) {
-        setLlamaTestResult(`Llama test failed: ${result.error ?? "unknown error"}`);
+        setClassifierTestResult(`Classifier test failed: ${result.error ?? "unknown error"}`);
       } else {
-        setLlamaTestResult(
-          `Llama test passed\nBase URL: ${result.baseUrl ?? ""}\nPath: ${result.path ?? ""}\nResponse: ${result.response ?? ""}`
+        setClassifierTestResult(
+          `Classifier test passed\nBase URL: ${result.baseUrl ?? ""}\nPath: ${result.path ?? ""}\nResponse: ${result.response ?? ""}`
         );
       }
     } catch (error: unknown) {
       const message = toErrorMessage(error, "unknown error");
-      setLlamaTestResult(`Llama test failed: ${message}`);
+      setClassifierTestResult(`Classifier test failed: ${message}`);
     } finally {
-      setLlamaTestBusy(false);
+      setClassifierTestBusy(false);
     }
   }
 
@@ -838,31 +838,31 @@ export function ConfigPage() {
           <div className="config-grid config-grid-two">
             <label>
               <div>Base URL</div>
-              <input value={cfg.llama.baseUrl} onChange={(event) => updateConfig("llama", { ...cfg.llama, baseUrl: event.target.value })} />
+              <input value={cfg.classifier.baseUrl} onChange={(event) => updateConfig("classifier", { ...cfg.classifier, baseUrl: event.target.value })} />
             </label>
             <label>
               <div>Classify Path</div>
               <input
-                value={cfg.llama.classifyPath}
-                onChange={(event) => updateConfig("llama", { ...cfg.llama, classifyPath: event.target.value })}
+                value={cfg.classifier.classifyPath}
+                onChange={(event) => updateConfig("classifier", { ...cfg.classifier, classifyPath: event.target.value })}
               />
             </label>
             <label>
               <div>API Key</div>
               <input
                 type="password"
-                value={cfg.llama.apiKey}
-                onChange={(event) => updateConfig("llama", { ...cfg.llama, apiKey: event.target.value })}
+                value={cfg.classifier.apiKey}
+                onChange={(event) => updateConfig("classifier", { ...cfg.classifier, apiKey: event.target.value })}
               />
             </label>
           </div>
           <div className="config-actions">
             <button type="button" onClick={saveConfig}>Save Configuration</button>
-            <button type="button" onClick={runLlamaTest} disabled={llamaTestBusy}>
-              {llamaTestBusy ? "Testing..." : "Run Llama Test"}
+            <button type="button" onClick={runClassifierTest} disabled={classifierTestBusy}>
+              {classifierTestBusy ? "Testing..." : "Run Classifier Test"}
             </button>
           </div>
-          {llamaTestResult ? <pre className="config-pre">{llamaTestResult}</pre> : null}
+          {classifierTestResult ? <pre className="config-pre">{classifierTestResult}</pre> : null}
         </div>
       ) : null}
 

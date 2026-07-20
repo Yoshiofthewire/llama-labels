@@ -54,7 +54,7 @@ Initiates desktop pairing and returns a secure pairing code.
 
 **Deep Link Format:**
 ```
-llamalabels://desktop-pair?code=A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6&srv=https://example.com
+kypost://desktop-pair?code=A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6&srv=https://example.com
 ```
 
 When the user clicks "Pair Desktop App":
@@ -141,7 +141,7 @@ The `pairDesktopApp()` function:
 1. Shows loading state ("Pairing...")
 2. Calls `POST /api/notifications/desktop/pair`
 3. Receives pairing code + server endpoint
-4. **Constructs deep link:** `llamalabels://desktop-pair?code=...&srv=...`
+4. **Constructs deep link:** `kypost://desktop-pair?code=...&srv=...`
 5. **Attempts to launch** desktop app via deep link (`window.location.href = deepLink`)
 6. **Fallback (2sec delay):** If app not installed, shows code for manual entry
 7. Shows status message with next steps
@@ -154,7 +154,7 @@ function buildDesktopPairingLink(pairingCode: string, serverUrl?: string): strin
   if (serverUrl) {
     params.set("srv", serverUrl);
   }
-  return `llamalabels://desktop-pair?${params.toString()}`;
+  return `kypost://desktop-pair?${params.toString()}`;
 }
 ```
 
@@ -166,7 +166,7 @@ Frontend calls /api/notifications/desktop/pair
          ↓
 Backend returns code + server endpoint
          ↓
-Frontend constructs: llamalabels://desktop-pair?code=...&srv=...
+Frontend constructs: kypost://desktop-pair?code=...&srv=...
          ↓
 Frontend navigates to deep link
          ├─→ Desktop app installed? → App launches, receives code
@@ -235,11 +235,11 @@ curl -X POST https://example.com/api/notifications/desktop/pair \
 
 Browser creates and navigates to:
 ```
-llamalabels://desktop-pair?code=A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6&srv=https://example.com
+kypost://desktop-pair?code=A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6&srv=https://example.com
 ```
 
 **Desktop App must:**
-1. Register `llamalabels://` protocol handler
+1. Register `kypost://` protocol handler
 2. Parse query parameters: `code` and `srv`
 3. Display pairing prompt to user (optional)
 4. Proceed to Step 3
@@ -444,7 +444,7 @@ Desktop app calls this endpoint to exchange pairing code for a session token.
    ↓
 2. Browser receives pairing code + server URL
    ↓
-3. Browser launches deep link: llamalabels://desktop-pair?code=...&srv=...
+3. Browser launches deep link: kypost://desktop-pair?code=...&srv=...
    ↓
 4. Desktop app wakes up, parses parameters
    ↓
@@ -471,7 +471,7 @@ Desktop app calls this endpoint to exchange pairing code for a session token.
       <string>KyPost Pairing</string>
       <key>CFBundleURLSchemes</key>
       <array>
-        <string>llamalabels</string>
+        <string>kypost</string>
       </array>
     </dict>
   </array>
@@ -481,7 +481,7 @@ Desktop app calls this endpoint to exchange pairing code for a session token.
 **Windows (Registry):**
 ```
 HKEY_CLASSES_ROOT
-  llamalabels
+  kypost
     (Default) = "URL:KyPost"
     URL Protocol = ""
     shell
@@ -493,8 +493,8 @@ HKEY_CLASSES_ROOT
 **Linux (desktop file):**
 ```ini
 [Desktop Entry]
-Exec=llamalabels-app %U
-MimeType=x-scheme-handler/llamalabels
+Exec=kypost-app %U
+MimeType=x-scheme-handler/kypost
 ```
 
 ### Pseudocode: Desktop App Pairing Handler
@@ -503,7 +503,7 @@ MimeType=x-scheme-handler/llamalabels
 def handle_deep_link(url):
     """Called when user clicks pairing link or app opens with link"""
     
-    # Parse deep link: llamalabels://desktop-pair?code=...&srv=...
+    # Parse deep link: kypost://desktop-pair?code=...&srv=...
     params = parse_url_params(url)
     code = params.get('code')
     server_url = params.get('srv')
@@ -592,13 +592,13 @@ def make_api_request(endpoint, method="GET", data=None):
 import keyring
 
 # Store
-keyring.set_password("llamalabels", "session_token", token)
+keyring.set_password("kypost", "session_token", token)
 
 # Retrieve
-token = keyring.get_password("llamalabels", "session_token")
+token = keyring.get_password("kypost", "session_token")
 
 # Delete
-keyring.delete_password("llamalabels", "session_token")
+keyring.delete_password("kypost", "session_token")
 ```
 
 **Electron (TypeScript):**
@@ -621,7 +621,7 @@ import Security
 
 let query: [String: Any] = [
     kSecClass as String: kSecClassGenericPassword,
-    kSecAttrAccount as String: "llamalabels",
+    kSecAttrAccount as String: "kypost",
     kSecValueData as String: token.data(using: .utf8)!
 ]
 
@@ -662,7 +662,7 @@ Before shipping a desktop app with pairing support:
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Deep link not launching app | Protocol handler not registered | Register `llamalabels://` handler in OS |
+| Deep link not launching app | Protocol handler not registered | Register `kypost://` handler in OS |
 | "Invalid or expired code" | Waited >5 minutes after getting code | Pairing codes expire after 5 min. Get a new one |
 | "Code already consumed" | Tried to use same code twice | Each code is single-use. Get a new one |
 | Rate limit after 5 attempts | Exceeded 5 failed attempts/hour | Wait 1 hour before retrying |
@@ -691,7 +691,7 @@ class LlamaLabelsDesktopApp:
     
     def handle_pairing_link(self, deep_link):
         """Called when app launches with pairing link"""
-        # Parse: llamalabels://desktop-pair?code=ABC123&srv=https://...
+        # Parse: kypost://desktop-pair?code=ABC123&srv=https://...
         parsed = urlparse(deep_link)
         params = parse_qs(parsed.query)
         
@@ -726,7 +726,7 @@ class LlamaLabelsDesktopApp:
                 
                 # Store token in system keyring
                 keyring.set_password(
-                    "llamalabels",
+                    "kypost",
                     "session_token",
                     self.session_token
                 )
@@ -755,7 +755,7 @@ class LlamaLabelsDesktopApp:
     def load_stored_token(self):
         """Load token from secure storage"""
         try:
-            token = keyring.get_password("llamalabels", "session_token")
+            token = keyring.get_password("kypost", "session_token")
             if token:
                 self.session_token = token
                 return True
@@ -788,7 +788,7 @@ class LlamaLabelsDesktopApp:
             
             if response.status_code == 401:
                 print("❌ Session expired. Please re-pair.")
-                keyring.delete_password("llamalabels", "session_token")
+                keyring.delete_password("kypost", "session_token")
                 self.session_token = None
                 return None
             
@@ -830,7 +830,7 @@ if __name__ == "__main__":
 ## Testing
 
 **Manual test - Deep link launch (with desktop app):**
-1. Install desktop app with `llamalabels://` deep link handler
+1. Install desktop app with `kypost://` deep link handler
 2. Navigate to "Pairing" page in settings
 3. Click "Pair Desktop App" button
 4. ✅ Desktop app launches automatically
@@ -847,7 +847,7 @@ if __name__ == "__main__":
 6. Desktop app exchanges code via `/api/notifications/desktop/register`
 
 **Deep link format test:**
-1. Manually construct deep link: `llamalabels://desktop-pair?code=ABC123...&srv=https://...`
+1. Manually construct deep link: `kypost://desktop-pair?code=ABC123...&srv=https://...`
 2. Open in browser (or use `open` command)
 3. Verify desktop app launches with correct parameters
 
@@ -871,5 +871,5 @@ if __name__ == "__main__":
 ```javascript
 // Check what deep link is being used
 // Open Network tab, click "Pair Desktop App"
-// Look for navigation to: llamalabels://desktop-pair?code=...&srv=...
+// Look for navigation to: kypost://desktop-pair?code=...&srv=...
 ```

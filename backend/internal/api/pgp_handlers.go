@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"llama-lab/backend/internal/pgpmail"
+	"kypost-server/backend/internal/pgpmail"
 )
 
 type pgpIdentityResponse struct {

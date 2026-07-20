@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"llama-lab/backend/internal/contacts"
+	"kypost-server/backend/internal/contacts"
 )
 
 // TestContactsDedupeEndpoint drives POST /api/contacts/dedupe end-to-end: it

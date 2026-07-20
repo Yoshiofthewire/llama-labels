@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"llama-lab/backend/internal/health"
-	"llama-lab/backend/internal/state"
+	"kypost-server/backend/internal/health"
+	"kypost-server/backend/internal/state"
 )
 
 // TestSendNativePushToDevicesFiltersToGivenList verifies that only the

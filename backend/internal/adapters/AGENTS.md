@@ -2,7 +2,7 @@
 
 ## Purpose
 
-External protocol clients that isolate third-party integration details from the rest of the backend. Contains two sub-packages: `imap/` and `llama/`.
+External protocol clients that isolate third-party integration details from the rest of the backend. Contains two sub-packages: `imap/` and `classifier/`.
 
 ## Ownership
 
@@ -17,7 +17,7 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 - Does not cache or buffer messages; callers receive a slice of messages and are responsible for processing
 - Returns errors on connection failure; callers (processor) handle retry logic
 
-### `llama/` — Ollama HTTP Client
+### `classifier/` — Classifier HTTP Client
 
 - Sends classification requests to Ollama `/api/generate` via HTTP POST
 - Enforces a minimum 3-second gap between consecutive requests (`http_client.go` pacing)
@@ -44,4 +44,4 @@ All code under `backend/internal/adapters/`. Owned by the backend team. Changes 
 
 ## Child DOX Index
 
-No child AGENTS.md files. `imap/` and `llama/` are documented here.
+No child AGENTS.md files. `imap/` and `classifier/` are documented here.

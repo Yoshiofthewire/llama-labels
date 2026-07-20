@@ -1,5 +1,5 @@
 services:
-  llama-lab:
+  kypost-server:
     build: .
     container_name: KyPost-Server
     ports:
@@ -8,10 +8,10 @@ services:
     environment:
       WEB_PORT: 5866
       TZ: ${TZ:-America/New_York}
-      SECRET_DIR: ${SECRET_DIR:-/llama_lab/private}
+      SECRET_DIR: ${SECRET_DIR:-/kypost/private}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
-      TUNING_FILE: ${TUNING_FILE:-/llama_lab/config/TUNING.md}
+      TUNING_FILE: ${TUNING_FILE:-/kypost/config/TUNING.md}
       SERVER_BASE_URL: ${SERVER_BASE_URL:-}
       PAIRING_SECRET: ${PAIRING_SECRET:-}
       CAPTCHA_PROVIDER: ${CAPTCHA_PROVIDER:-}
@@ -27,15 +27,15 @@ services:
       - 8.8.8.8
       - 8.8.4.4
     volumes:
-      - llama_config:/llama_lab/config
-      - llama_private:/llama_lab/private
-      - llama_logs:/llama_lab/logs
-      - llama_state:/llama_lab/state
-      - ${OLLAMA_MODELS_HOST_DIR:-./share/ollama/models}:/llama_lab/ollama-models
+      - kypost_config:/kypost/config
+      - kypost_private:/kypost/private
+      - kypost_logs:/kypost/logs
+      - kypost_state:/kypost/state
+      - ${OLLAMA_MODELS_HOST_DIR:-./share/ollama/models}:/kypost/ollama-models
     restart: unless-stopped
 
 volumes:
-  llama_config:
-  llama_private:
-  llama_logs:
-  llama_state:
+  kypost_config:
+  kypost_private:
+  kypost_logs:
+  kypost_state:

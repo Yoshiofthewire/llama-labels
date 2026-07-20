@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"llama-lab/backend/internal/contacts"
-	"llama-lab/backend/internal/users"
+	"kypost-server/backend/internal/contacts"
+	"kypost-server/backend/internal/users"
 )
 
 // TestContactsSearchRequiresAuth confirms GET /api/contacts/search is gated

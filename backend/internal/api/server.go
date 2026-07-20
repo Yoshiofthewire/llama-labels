@@ -29,25 +29,25 @@ import (
 	"syscall"
 	"time"
 
-	imapadapter "llama-lab/backend/internal/adapters/imap"
-	"llama-lab/backend/internal/adapters/llama"
-	"llama-lab/backend/internal/captcha"
-	"llama-lab/backend/internal/config"
-	"llama-lab/backend/internal/contacts"
-	"llama-lab/backend/internal/cryptutil"
-	"llama-lab/backend/internal/fsutil"
-	"llama-lab/backend/internal/groups"
-	"llama-lab/backend/internal/health"
-	"llama-lab/backend/internal/logging"
-	"llama-lab/backend/internal/mailcache"
-	"llama-lab/backend/internal/mailmsg"
-	"llama-lab/backend/internal/mfa"
-	"llama-lab/backend/internal/pgpmail"
-	"llama-lab/backend/internal/processor"
-	"llama-lab/backend/internal/rules"
-	"llama-lab/backend/internal/state"
-	"llama-lab/backend/internal/totp"
-	"llama-lab/backend/internal/users"
+	imapadapter "kypost-server/backend/internal/adapters/imap"
+	"kypost-server/backend/internal/adapters/classifier"
+	"kypost-server/backend/internal/captcha"
+	"kypost-server/backend/internal/config"
+	"kypost-server/backend/internal/contacts"
+	"kypost-server/backend/internal/cryptutil"
+	"kypost-server/backend/internal/fsutil"
+	"kypost-server/backend/internal/groups"
+	"kypost-server/backend/internal/health"
+	"kypost-server/backend/internal/logging"
+	"kypost-server/backend/internal/mailcache"
+	"kypost-server/backend/internal/mailmsg"
+	"kypost-server/backend/internal/mfa"
+	"kypost-server/backend/internal/pgpmail"
+	"kypost-server/backend/internal/processor"
+	"kypost-server/backend/internal/rules"
+	"kypost-server/backend/internal/state"
+	"kypost-server/backend/internal/totp"
+	"kypost-server/backend/internal/users"
 
 	goimap "github.com/BrianLeishman/go-imap"
 )
@@ -67,9 +67,10 @@ type Session struct {
 
 // AuthContext identifies the caller of an authenticated request.
 type AuthContext struct {
-	UserID   string
-	Username string
-	Role     users.Role
+	UserID             string
+	Username           string
+	Role               users.Role
+	MustChangePassword bool
 }
 
 type Server struct {
@@ -95,7 +96,9 @@ type Server struct {
 	nativePushDispatcher *processor.NativePushDispatcher
 	pickupStore          *pgpmail.PickupStore
 	poller               *processor.Poller
-	loginLockout         *loginLockout
+	loginLockout         *failureLockout
+	davLockout           *failureLockout
+	mfaLockout           *failureLockout
 	captchaVerifier      captcha.Verifier
 	captchaProvider      captcha.Provider
 	captchaSiteKey       string
@@ -117,13 +120,13 @@ type Server struct {
 }
 
 func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Service, usersStore *users.Store, onConfigUpdated func(config.Config)) *Server {
-	configDir := config.EnvOrDefault("CONFIG_DIR", "/llama_lab/config")
-	stateDir := config.EnvOrDefault("STATE_DIR", "/llama_lab/state")
-	logPath := filepath.Join(config.EnvOrDefault("LOG_DIR", "/llama_lab/logs"), "app.log")
-	imapConfigKeyPath := config.EnvOrDefault("IMAP_CONFIG_KEY_FILE", "/llama_lab/private/imap-config.key")
-	totpSecretKeyPath := config.EnvOrDefault("TOTP_SECRET_KEY_FILE", "/llama_lab/private/totp-secret.key")
-	pgpPrivateKeyPath := config.EnvOrDefault("PGP_PRIVATE_KEY_FILE", "/llama_lab/private/pgp-private-key.key")
-	pickupStoreKeyPath := config.EnvOrDefault("PICKUP_STORE_KEY_FILE", "/llama_lab/private/pickup-store.key")
+	configDir := config.EnvOrDefault("CONFIG_DIR", "/kypost/config")
+	stateDir := config.EnvOrDefault("STATE_DIR", "/kypost/state")
+	logPath := filepath.Join(config.EnvOrDefault("LOG_DIR", "/kypost/logs"), "app.log")
+	imapConfigKeyPath := config.EnvOrDefault("IMAP_CONFIG_KEY_FILE", "/kypost/private/imap-config.key")
+	totpSecretKeyPath := config.EnvOrDefault("TOTP_SECRET_KEY_FILE", "/kypost/private/totp-secret.key")
+	pgpPrivateKeyPath := config.EnvOrDefault("PGP_PRIVATE_KEY_FILE", "/kypost/private/pgp-private-key.key")
+	pickupStoreKeyPath := config.EnvOrDefault("PICKUP_STORE_KEY_FILE", "/kypost/private/pickup-store.key")
 	pairingSecret := strings.TrimSpace(os.Getenv("PAIRING_SECRET"))
 
 	captchaProvider := captcha.Provider(strings.ToLower(strings.TrimSpace(os.Getenv("CAPTCHA_PROVIDER"))))
@@ -170,6 +173,8 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		deviceIndex:          map[string]string{},
 		davCredentials:       newDAVCredentialCache(),
 		loginLockout:         newLoginLockout(),
+		davLockout:           newFailureLockout(davMaxFailures, davLockoutFor),
+		mfaLockout:           newFailureLockout(mfaMaxFailures, mfaLockoutFor),
 		captchaVerifier:      captchaVerifier,
 		captchaProvider:      captchaProvider,
 		captchaSiteKey:       captchaSiteKey,
@@ -216,6 +221,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/mfa/push/enabled", s.withAuth(s.handleMFAPushEnabled))
 	mux.HandleFunc("PUT /api/notifications/native/devices/{deviceId}/mfa", s.withAuth(s.handleNativeDeviceMFA))
 	mux.HandleFunc("GET /api/auth/me", s.handleMe)
+	mux.HandleFunc("GET /api/auth/csrf", s.handleCSRFToken)
 	mux.HandleFunc("POST /api/auth/logout", s.withAuth(s.handleLogout))
 	mux.HandleFunc("POST /api/auth/password", s.withAuth(s.handleChangePassword))
 	mux.HandleFunc("/api/status", s.withAuth(s.handleStatus))
@@ -247,7 +253,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/mail/send", s.withMailAuth(s.handleMailSend))
 	mux.HandleFunc("GET /api/mail/attachments", s.withMailAuth(s.handleMailAttachmentList))
 	mux.HandleFunc("GET /api/mail/attachment", s.withMailAuth(s.handleMailAttachmentDownload))
-	mux.HandleFunc("POST /api/llama/test", s.withAuth(s.handleLlamaTest))
+	mux.HandleFunc("POST /api/classifier/test", s.withAdmin(s.handleClassifierTest))
 	mux.HandleFunc("GET /api/tuning", s.withAuth(s.handleTuning))
 	mux.HandleFunc("PUT /api/tuning", s.withAuth(s.handleTuning))
 	mux.HandleFunc("GET /api/notifications/preferences", s.withAuth(s.handleNotificationPreferences))
@@ -316,7 +322,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /pickup/{id}", s.handlePickup)
 	mux.HandleFunc("/", s.handleFrontend)
 
-	return mux
+	return withSecurityHeaders(mux)
 }
 
 func (s *Server) Run() error {
@@ -1258,7 +1264,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// Remote LLM settings (including the API key) are admin-only to
 		// edit; don't hand the plaintext key to a non-admin session either.
 		if ac, ok := authFromContext(r); !ok || ac.Role != users.RoleAdmin {
-			cfg.Llama.APIKey = ""
+			cfg.Classifier.APIKey = ""
 		}
 		writeJSON(w, http.StatusOK, cfg)
 	case http.MethodPut:
@@ -1268,14 +1274,14 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.mu.RLock()
-		llamaChanged := next.Llama != s.cfg.Llama
+		classifierChanged := next.Classifier != s.cfg.Classifier
 		// VAPID key material is server-owned and json:"-" on the wire;
 		// carry it across the round-trip.
 		next.Notifications = s.cfg.Notifications
 		s.mu.RUnlock()
 		// Remote LLM settings are admin-only. Reject (rather than silently
 		// drop) a non-admin change so a broken save is never masked.
-		if ac, ok := authFromContext(r); llamaChanged && (!ok || ac.Role != users.RoleAdmin) {
+		if ac, ok := authFromContext(r); classifierChanged && (!ok || ac.Role != users.RoleAdmin) {
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "remote llm settings require admin access"})
 			return
 		}
@@ -1286,8 +1292,8 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.cfg = next
 		s.mu.Unlock()
-		if llamaChanged {
-			llama.ResetWarmupState()
+		if classifierChanged {
+			classifier.ResetWarmupState()
 		}
 		if s.onConfigUpdated != nil {
 			s.onConfigUpdated(next)
@@ -1464,7 +1470,7 @@ func (s *Server) handleNotificationTest(w http.ResponseWriter, r *http.Request) 
 	title := strings.TrimSpace(payload.Title)
 	body := strings.TrimSpace(payload.Body)
 	if title == "" {
-		title = "Llama Mail Test Notification"
+		title = "KyPost Test Notification"
 	}
 	if body == "" {
 		body = "Push delivery is working across all subscribed devices."
@@ -1474,7 +1480,7 @@ func (s *Server) handleNotificationTest(w http.ResponseWriter, r *http.Request) 
 		"title": title,
 		"body":  body,
 		"url":   "/notifications",
-		"tag":   "llama-mail-test",
+		"tag":   "kypost-test",
 	}
 	payloadBytes, err := json.Marshal(message)
 	if err != nil {
@@ -1671,6 +1677,15 @@ func (s *Server) handleNotificationNativeRegister(w http.ResponseWriter, r *http
 	store, err := s.userStore(ownerID)
 	if err != nil {
 		http.Error(w, "failed to open user state", http.StatusInternalServerError)
+		return
+	}
+
+	// A device id is global (the deviceIndex maps it to exactly one owner), but
+	// the id is client-supplied. Refuse to register one already owned by a
+	// different user, so a caller can't hijack a victim's device-index entry
+	// and deny that device service.
+	if strings.TrimSpace(req.DeviceID) != "" && s.deviceIDOwnedByAnother(ownerID, strings.TrimSpace(req.DeviceID)) {
+		http.Error(w, "device id already registered", http.StatusConflict)
 		return
 	}
 
@@ -2097,8 +2112,21 @@ func (s *Server) parsePairingTokenUserID(token string, now time.Time) (string, e
 	return claims.Sub, nil
 }
 
+// trustProxyHeaders reports whether X-Forwarded-Proto/Host/For may be
+// believed. Defaults to true — the documented deployment puts the container
+// behind a TLS-terminating reverse proxy that sets them — but a deployment
+// that exposes the container directly should set TRUST_PROXY_HEADERS=false
+// so clients can't influence scheme/host/IP decisions with forged headers.
+func trustProxyHeaders() bool {
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("TRUST_PROXY_HEADERS")), "false")
+}
+
 func externalBaseURL(r *http.Request) string {
-	proto := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0])
+	var proto, host string
+	if trustProxyHeaders() {
+		proto = strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0])
+		host = strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0])
+	}
 	if proto == "" {
 		if r.TLS != nil {
 			proto = "https"
@@ -2106,7 +2134,6 @@ func externalBaseURL(r *http.Request) string {
 			proto = "http"
 		}
 	}
-	host := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0])
 	if host == "" {
 		host = strings.TrimSpace(r.Host)
 	}
@@ -2116,14 +2143,30 @@ func externalBaseURL(r *http.Request) string {
 	return proto + "://" + host
 }
 
-// clientIP best-effort resolves the caller's IP for logging/CAPTCHA context
-// (never for security decisions): X-Forwarded-For's first hop when present
-// (this app already trusts X-Forwarded-* for scheme/host, see
-// externalBaseURL/isRequestSecure), falling back to the raw connection
-// address with its port stripped.
+// clientIP best-effort resolves the caller's IP for logging, CAPTCHA
+// context, and lockout keying: X-Forwarded-For's first hop when proxy
+// headers are trusted (see trustProxyHeaders — this app then also trusts
+// X-Forwarded-* for scheme/host in externalBaseURL/isRequestSecure), falling
+// back to the raw connection address with its port stripped. When used as a
+// lockout key, a client forging X-Forwarded-For on a directly-exposed
+// deployment could dodge or misdirect lockouts — set TRUST_PROXY_HEADERS=false
+// there.
 func clientIP(r *http.Request) string {
-	if fwd := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]); fwd != "" {
-		return fwd
+	if trustProxyHeaders() {
+		// Use the RIGHT-most hop — the address the nearest trusted proxy
+		// appended — not the left-most one. A client can prepend arbitrary
+		// values to X-Forwarded-For (an appending proxy like nginx's
+		// $proxy_add_x_forwarded_for turns a client-sent "a" into "a, <realip>"),
+		// so keying the login lockout on the left-most hop let a client rotate
+		// it and evade the lockout. This assumes a single trusted proxy in
+		// front; multi-proxy deployments should set TRUST_PROXY_HEADERS=false
+		// and rely on RemoteAddr, or terminate the chain at a known hop.
+		if xff := r.Header.Get("X-Forwarded-For"); strings.TrimSpace(xff) != "" {
+			parts := strings.Split(xff, ",")
+			if fwd := strings.TrimSpace(parts[len(parts)-1]); fwd != "" {
+				return fwd
+			}
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -2137,8 +2180,10 @@ func clientIP(r *http.Request) string {
 // Used to decide whether the session cookie can carry the Secure attribute
 // without breaking plain-HTTP local/dev deployments.
 func isRequestSecure(r *http.Request) bool {
-	if proto := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); proto != "" {
-		return strings.EqualFold(proto, "https")
+	if trustProxyHeaders() {
+		if proto := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); proto != "" {
+			return strings.EqualFold(proto, "https")
+		}
 	}
 	return r.TLS != nil
 }
@@ -2980,7 +3025,7 @@ func (s *Server) handleTuning(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				// New users start from the install's default tuning prompt.
-				fallback := strings.TrimSpace(llama.LoadTuningText())
+				fallback := strings.TrimSpace(classifier.LoadTuningText())
 				if fallback != "" {
 					writeJSON(w, http.StatusOK, map[string]any{"content": fallback, "path": tuningPath})
 					return
@@ -3008,7 +3053,7 @@ func (s *Server) handleTuning(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to save tuning file", http.StatusInternalServerError)
 			return
 		}
-		// Tuning is now passed to the model per classify call, so no llama
+		// Tuning is now passed to the model per classify call, so no classifier
 		// process restart is needed for edits to take effect.
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": tuningPath, "restartOk": true, "restartError": ""})
 	}
@@ -3021,7 +3066,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			lines = v
 		}
 	}
-	logDir := config.EnvOrDefault("LOG_DIR", "/llama_lab/logs")
+	logDir := config.EnvOrDefault("LOG_DIR", "/kypost/logs")
 	// Resolve requested file — default to app.log, allow any *.log in logDir
 	filename := filepath.Base(r.URL.Query().Get("file"))
 	if filename == "" || filename == "." {
@@ -3042,7 +3087,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogsList(w http.ResponseWriter, r *http.Request) {
-	logDir := config.EnvOrDefault("LOG_DIR", "/llama_lab/logs")
+	logDir := config.EnvOrDefault("LOG_DIR", "/kypost/logs")
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
 		http.Error(w, "failed to list logs", http.StatusInternalServerError)
@@ -3103,8 +3148,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Three-strikes/15-minute lockout, keyed by the exact username
 	// submitted regardless of whether it belongs to a real account (so
-	// lockout behavior can't be used to enumerate valid usernames).
-	if allowed, retryAfter := s.loginLockout.allowed(req.Username); !allowed {
+	// lockout behavior can't be used to enumerate valid usernames) plus the
+	// client IP (so an attacker hammering a known username can't lock the
+	// real owner out from their own machine).
+	lockoutKey := req.Username + "\x00" + clientIP(r)
+	if allowed, retryAfter := s.loginLockout.allowed(lockoutKey); !allowed {
 		retrySeconds := int(retryAfter.Seconds()) + 1
 		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
@@ -3131,12 +3179,20 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u, err := s.users.GetByUsername(req.Username)
-	if err != nil || !u.Active || !users.VerifyPassword(u, req.Password) {
-		s.loginLockout.recordFailure(req.Username)
+	if err != nil || !u.Active {
+		// Pay the same scrypt cost a real password check would, so response
+		// timing doesn't reveal whether the username exists (or is inactive).
+		equalizeLoginTiming(req.Password)
+		s.loginLockout.recordFailure(lockoutKey)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
-	s.loginLockout.recordSuccess(req.Username)
+	if !users.VerifyPassword(u, req.Password) {
+		s.loginLockout.recordFailure(lockoutKey)
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	s.loginLockout.recordSuccess(lockoutKey)
 
 	// Second-factor users must clear a challenge before a session exists. No
 	// cookie is set here; the client receives a challenge id plus the methods it
@@ -3182,8 +3238,36 @@ func (s *Server) handleCaptchaConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleCSRFToken returns the CSRF token paired with the caller's session,
+// for same-origin JS that cannot read the non-HttpOnly csrf_token cookie —
+// specifically the service worker's pushsubscriptionchange handler, which
+// must send X-CSRF-Token on its resubscription POST but has no access to
+// document.cookie. The response carries no CORS headers, so a cross-origin
+// page can trigger this GET but never read the token; possession of the
+// session cookie remains the only way to obtain it, which is exactly the
+// double-submit invariant csrfCheckOK enforces.
+func (s *Server) handleCSRFToken(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.currentUser(r); !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	cookie, err := r.Cookie("kypost_session")
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	s.mu.Lock()
+	sess, ok := s.sessions[cookie.Value]
+	s.mu.Unlock()
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"csrfToken": sess.CSRFToken})
+}
+
 // startSession mints a session token for userID, records it, and sets the
-// llama_session cookie with exactly the flags the legacy password-only login
+// kypost_session cookie with exactly the flags the legacy password-only login
 // used. Shared by handleLogin and the second-factor endpoints.
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID string) error {
 	token, err := randomToken(24)
@@ -3198,7 +3282,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID str
 	s.sessions[token] = Session{UserID: userID, ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: csrfToken}
 	s.mu.Unlock()
 	secure := isRequestSecure(r)
-	http.SetCookie(w, &http.Cookie{Name: "llama_session", Value: token, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: "kypost_session", Value: token, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
 	// Deliberately NOT HttpOnly: the frontend must be able to read this and
 	// echo it back as the X-CSRF-Token header (double-submit pattern) — see
 	// csrfCheckOK. It carries no authority on its own without the paired
@@ -3225,6 +3309,14 @@ func (s *Server) handleMFATOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-account throttle spanning challenges: the per-challenge attempt cap
+	// alone can be reset by minting a new challenge, so a password-holding
+	// attacker could otherwise brute force TOTP online.
+	if allowed, _ := s.mfaLockout.allowed(ch.UserID); !allowed {
+		http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
+		return
+	}
+
 	u, err := s.users.Get(ch.UserID)
 	if err != nil || !u.Active || !u.TOTPEnabled || u.TOTPSecretEnc == "" {
 		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
@@ -3238,6 +3330,7 @@ func (s *Server) handleMFATOTP(w http.ResponseWriter, r *http.Request) {
 
 	step, valid := totp.Validate(secret, req.Code, time.Now())
 	if !valid {
+		s.mfaLockout.recordFailure(ch.UserID)
 		if err := s.mfaChallenges.RecordTOTPAttempt(ch.ID); errors.Is(err, mfa.ErrTooManyAttempts) {
 			http.Error(w, "too many attempts", http.StatusUnauthorized)
 			return
@@ -3245,6 +3338,7 @@ func (s *Server) handleMFATOTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid code", http.StatusUnauthorized)
 		return
 	}
+	s.mfaLockout.recordSuccess(ch.UserID)
 
 	// A challenge is single-use: ConsumeTOTPStep atomically checks-and-marks
 	// consumption under a single lock, so two concurrent requests bearing the
@@ -3283,6 +3377,10 @@ func (s *Server) handleMFARecoveryCode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
 		return
 	}
+	if allowed, _ := s.mfaLockout.allowed(ch.UserID); !allowed {
+		http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
+		return
+	}
 	u, err := s.users.Get(ch.UserID)
 	if err != nil || !u.Active || !u.TOTPEnabled {
 		http.Error(w, "invalid or expired challenge", http.StatusUnauthorized)
@@ -3295,6 +3393,7 @@ func (s *Server) handleMFARecoveryCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !matched {
+		s.mfaLockout.recordFailure(ch.UserID)
 		if err := s.mfaChallenges.RecordTOTPAttempt(ch.ID); errors.Is(err, mfa.ErrTooManyAttempts) {
 			http.Error(w, "too many attempts", http.StatusUnauthorized)
 			return
@@ -3302,6 +3401,7 @@ func (s *Server) handleMFARecoveryCode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid code", http.StatusUnauthorized)
 		return
 	}
+	s.mfaLockout.recordSuccess(ch.UserID)
 
 	s.mfaChallenges.Delete(ch.ID)
 	if err := s.startSession(w, r, u.ID); err != nil {
@@ -3312,24 +3412,24 @@ func (s *Server) handleMFARecoveryCode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	c, err := r.Cookie("llama_session")
+	c, err := r.Cookie("kypost_session")
 	if err == nil {
 		s.mu.Lock()
 		delete(s.sessions, c.Value)
 		s.mu.Unlock()
 	}
 	secure := isRequestSecure(r)
-	http.SetCookie(w, &http.Cookie{Name: "llama_session", Value: "", Path: "/", Expires: time.Unix(0, 0), MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: "kypost_session", Value: "", Path: "/", Expires: time.Unix(0, 0), MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
 	http.SetCookie(w, &http.Cookie{Name: "csrf_token", Value: "", Path: "/", Expires: time.Unix(0, 0), MaxAge: -1, HttpOnly: false, Secure: secure, SameSite: http.SameSiteLaxMode})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// currentSessionToken returns the llama_session cookie value on r, or "" if
+// currentSessionToken returns the kypost_session cookie value on r, or "" if
 // absent — used alongside revokeUserSessions so a self-service credential
 // change revokes every *other* session without also logging out the request
 // that made the change.
 func currentSessionToken(r *http.Request) string {
-	if c, err := r.Cookie("llama_session"); err == nil {
+	if c, err := r.Cookie("kypost_session"); err == nil {
 		return c.Value
 	}
 	return ""
@@ -3421,7 +3521,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (s *Server) handleLlamaTest(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleClassifierTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt string `json:"prompt"`
 	}
@@ -3434,27 +3534,27 @@ func (s *Server) handleLlamaTest(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfg
 	s.mu.RUnlock()
 
-	baseURL := strings.TrimSpace(cfg.Llama.BaseURL)
+	baseURL := strings.TrimSpace(cfg.Classifier.BaseURL)
 	if baseURL == "" {
-		baseURL = strings.TrimSpace(os.Getenv("LLAMA_BASE_URL"))
+		baseURL = strings.TrimSpace(os.Getenv("CLASSIFIER_BASE_URL"))
 	}
 	if baseURL == "" {
-		http.Error(w, "llama base url is not configured", http.StatusBadRequest)
+		http.Error(w, "classifier base url is not configured", http.StatusBadRequest)
 		return
 	}
 
-	path := strings.TrimSpace(cfg.Llama.ClassifyPath)
+	path := strings.TrimSpace(cfg.Classifier.ClassifyPath)
 	if path == "" {
 		path = "/"
 	}
-	apiKey := strings.TrimSpace(cfg.Llama.APIKey)
+	apiKey := strings.TrimSpace(cfg.Classifier.APIKey)
 	if apiKey == "" {
-		apiKey = strings.TrimSpace(os.Getenv("LLAMA_API_KEY"))
+		apiKey = strings.TrimSpace(os.Getenv("CLASSIFIER_API_KEY"))
 	}
 
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
-		prompt = "Email Address: test@example.com  Subject Line: Llama connectivity test Return only the label Updates"
+		prompt = "Email Address: test@example.com  Subject Line: Classifier connectivity test Return only the label Updates"
 	}
 
 	allowed := cfg.Labels.Allowlist
@@ -3462,8 +3562,8 @@ func (s *Server) handleLlamaTest(w http.ResponseWriter, r *http.Request) {
 		allowed = []string{"Questionable", "Important"}
 	}
 
-	tuning := llama.LoadTuningText()
-	client := llama.NewHTTPClient(baseURL, apiKey, path, tuning, 120*time.Second)
+	tuning := classifier.LoadTuningText()
+	client := classifier.NewHTTPClient(baseURL, apiKey, path, tuning, 120*time.Second)
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
@@ -3482,7 +3582,7 @@ func (s *Server) handleLlamaTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFrontend(w http.ResponseWriter, r *http.Request) {
-	frontendDir := config.EnvOrDefault("FRONTEND_DIR", "/opt/llama-lab/frontend")
+	frontendDir := config.EnvOrDefault("FRONTEND_DIR", "/opt/kypost/frontend")
 	indexPath := filepath.Join(frontendDir, "index.html")
 
 	requestPath := path.Clean("/" + r.URL.Path)
@@ -3518,6 +3618,15 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "missing or invalid csrf token"})
 			return
 		}
+		// Enforce the first-login password change server-side: a user who still
+		// owes a password change (e.g. the bootstrap admin) gets a full session
+		// but may reach nothing except the change/logout endpoints until they
+		// rotate it. Without this the flag is merely advisory and a default
+		// credential grants full access.
+		if ac.MustChangePassword && !mustChangePasswordExemptPaths[r.URL.Path] {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "password change required", "mustChangePassword": true})
+			return
+		}
 		next(w, r.WithContext(context.WithValue(r.Context(), authContextKey{}, ac)))
 	}
 }
@@ -3525,7 +3634,7 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 // csrfCheckOK enforces a double-submit CSRF check on cookie-authenticated,
 // state-changing (non-GET/HEAD/OPTIONS) requests: the X-CSRF-Token header
 // must match the csrf_token minted alongside the caller's session (see
-// startSession). It intentionally does nothing when no llama_session cookie
+// startSession). It intentionally does nothing when no kypost_session cookie
 // is present — mobile clients (X-Kypost-Device-Id/X-Kypost-Device-Secret
 // headers, see resolveMailAuthContext) and CardDAV (HTTP Basic Auth) never send that
 // cookie, so they carry no ambient, forgeable credential for CSRF to exploit
@@ -3536,7 +3645,7 @@ func (s *Server) csrfCheckOK(r *http.Request) bool {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return true
 	}
-	cookie, err := r.Cookie("llama_session")
+	cookie, err := r.Cookie("kypost_session")
 	if err != nil {
 		return true
 	}
@@ -3575,6 +3684,12 @@ func (s *Server) withMailAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "missing or invalid csrf token"})
 			return
 		}
+		// Session users still owing a first-login password change are blocked
+		// here too (device-auth contexts never set this flag).
+		if ac.MustChangePassword && !mustChangePasswordExemptPaths[r.URL.Path] {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "password change required", "mustChangePassword": true})
+			return
+		}
 		next(w, r.WithContext(context.WithValue(r.Context(), authContextKey{}, ac)))
 	}
 }
@@ -3599,7 +3714,7 @@ func authContextFromContext(ctx context.Context) (AuthContext, bool) {
 // change or deactivation take effect on the request immediately following
 // it rather than only at next login.
 func (s *Server) currentUser(r *http.Request) (AuthContext, bool) {
-	cookie, err := r.Cookie("llama_session")
+	cookie, err := r.Cookie("kypost_session")
 	if err != nil {
 		return AuthContext{}, false
 	}
@@ -3626,7 +3741,17 @@ func (s *Server) currentUser(r *http.Request) (AuthContext, bool) {
 		s.mu.Unlock()
 		return AuthContext{}, false
 	}
-	return AuthContext{UserID: u.ID, Username: u.Username, Role: u.Role}, true
+	return AuthContext{UserID: u.ID, Username: u.Username, Role: u.Role, MustChangePassword: u.MustChangePassword}, true
+}
+
+// mustChangePasswordExemptPaths are the only authenticated routes a user with
+// an unsatisfied first-login password-change requirement may reach: the
+// change endpoint itself and logout. Everything else is refused until the
+// password is rotated, so a known/default bootstrap credential cannot be used
+// for anything but changing it.
+var mustChangePasswordExemptPaths = map[string]bool{
+	"/api/auth/password": true,
+	"/api/auth/logout":   true,
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

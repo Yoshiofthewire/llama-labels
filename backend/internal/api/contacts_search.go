@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"llama-lab/backend/internal/contacts"
+	"kypost-server/backend/internal/contacts"
 )
 
 // contactsSearchDefaultLimit and contactsSearchMaxLimit bound the number of

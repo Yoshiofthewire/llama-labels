@@ -6,14 +6,14 @@ Go module owning the email classification engine, HTTP API server, IMAP integrat
 
 ## Ownership
 
-All code under `backend/`. Produces the `llama-lab` binary consumed by the container at runtime.
+All code under `backend/`. Produces the `kypost-server` binary consumed by the container at runtime.
 
 ## Local Contracts
 
 - Go 1.26.4; direct dependencies: `go-imap`, `yaml.v3`, `webpush-go`, `golang.org/x/crypto`, `emersion/go-webdav` (CardDAV protocol handling, `carddav` subpackage; transitively pulls `emersion/go-vcard`)
 - Entry point: `cmd/main.go` → `app.Run(os.Args)`
 - All business logic lives under `internal/`; `cmd/` contains only the entry point
-- Binary output: `llama-lab`, deployed to `/app/bin/llama-lab` in the container
+- Binary output: `kypost-server`, deployed to `/app/bin/kypost-server` in the container
 - HTTP API listens on `WEB_PORT` (default 5866)
 - Three runtime modes: `daemon` (poller only), `server` (API only), `all` (both)
 - In Docker `server` and `daemon` run as separate processes that share no memory; all cross-process coordination happens through disk. Any store mutated by both processes must re-read from disk before mutating and write atomically (see `state.Store` and `users.Store`)
@@ -32,7 +32,7 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 | `api/` | HTTP endpoints; session auth with role enforcement (`withAuth`/`withAdmin`, `AuthContext` via request context); user management; per-user config/IMAP/tuning/notification scoping |
 | `users/` | Multi-user account store (`users.json`): roles, scrypt password hashing, soft-delete lifecycle, legacy `admin.env` migration |
 | `adapters/imap/` | IMAP UID-based email fetching; credential decrypt; one `APIClient` per credential file (per user) |
-| `adapters/llama/` | Ollama `/api/generate` HTTP calls; 3s inter-request pacing; retry backoff; tuning text passed per classify call |
+| `adapters/classifier/` | Ollama `/api/generate` HTTP calls; 3s inter-request pacing; retry backoff; tuning text passed per classify call |
 | `processor/` | Timed polling loop (~90s default); polls every active user's mailbox per tick with bounded concurrency (4); per-user rate budgets; fault isolation (only all-users-failing flips global health) |
 | `config/` | YAML config load/init; global `Config` plus per-user `UserSettings` (notification prefs) |
 | `state/` | Per-user checkpoint, processed-set, decisions, subscriptions, devices; instantiated per user directory |
@@ -48,7 +48,7 @@ All code under `backend/`. Produces the `llama-lab` binary consumed by the conta
 1. Poller fires on timer; lists active users from `users.json` and fans out over those with a stored IMAP config (bounded concurrency 4, per-user panic recovery)
 2. Per user: fetch unread emails from their IMAP mailbox since their checkpoint
 3. Apply global redaction patterns to sender, subject, body
-4. POST to Ollama `/api/generate` with the user's tuning prompt + redacted email text (one shared, serialized Llama client across all users)
+4. POST to Ollama `/api/generate` with the user's tuning prompt + redacted email text (one shared, serialized classifier client across all users)
 5. Fuzzy-match Ollama response against the global label allowlist
 6. Apply matched label as an IMAP keyword in the user's mailbox
 7. Send browser and native push notifications using the user's notification-mode gate (`none`, `all`, `keywords`) and the shared VAPID keys
@@ -76,7 +76,7 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 | `GET /api/health` | no | 503 when unhealthy |
 | `POST /api/health/repair` | admin | Clears sticky failure state (container restart) |
 | `GET /api/status` | yes | Scan interval, rate limits, caller's checkpoint and emails processed in the last hour, server time |
-| `GET\|PUT /api/config` | yes | Global config; PUT rejects Remote LLM (`llama.*`) changes from non-admins with 403; PUT broadcasts to running poller |
+| `GET\|PUT /api/config` | yes | Global config; PUT rejects Remote LLM (`classifier.*`) changes from non-admins with 403; PUT broadcasts to running poller |
 | `GET /api/labels` | yes | Allowed label list + labels discovered in the caller's mailbox |
 | `GET /api/decisions?limit=N` | yes | Caller's own audit trail |
 | `GET /api/inbox?limit=N&mailbox=<name>` | yes | Live IMAP mailbox (read + unread) grouped by allowed keywords + Uncategorized |
@@ -84,12 +84,12 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 | `POST /api/inbox/actions` | yes | Bulk inbox actions: `delete`, `archive`, `spam`, `read`, `move` by `messageIds[]`, optional `mailbox`, and `targetMailbox` for `move`; actions execute in the selected mailbox, and `archive` moves to `Archive/<email sent year>` (fallback received year/current year) and creates folder if needed |
 | `GET /api/logs?file=<name>.log&lines=<n>` | admin | Log tail |
 | `GET /api/logs/list` | admin | Log file inventory |
-| `POST /api/llama/test` | yes | Classify a test email |
+| `POST /api/classifier/test` | yes | Classify a test email |
 | `GET\|POST\|DELETE /api/imap/config` | yes | Caller's encrypted IMAP credentials plus optional SMTP host/port override used by `/api/mail/send` |
 | `POST /api/imap/test` | yes | Live IMAP connectivity check (falls back to caller's stored config) |
 | `POST /api/mail/draft` | yes | Saves compose content to the caller's IMAP Drafts folder |
 | `POST /api/mail/send` | yes | Sends compose email via SMTP using the caller's credentials, logs send attempts/results, applies a send timeout, and appends successful sends to Sent mailbox (response can include warning when Sent append fails) |
-| `GET\|PUT /api/tuning` | yes | Caller's own tuning prompt (`users/<id>/tuning.md`); GET falls back to the install default `TUNING.md`; PUT needs no llama restart (tuning is passed per classify call) |
+| `GET\|PUT /api/tuning` | yes | Caller's own tuning prompt (`users/<id>/tuning.md`); GET falls back to the install default `TUNING.md`; PUT needs no classifier restart (tuning is passed per classify call) |
 | `GET\|PUT /api/notifications/preferences` | yes | Caller's delivery mode + keywords (moved out of global config) |
 | `GET /api/notifications/vapid-public-key` | yes | Shared VAPID public key for browser push subscription setup |
 | `POST\|DELETE /api/notifications/subscriptions` | yes | Upsert or remove a browser push subscription in the caller's store |
@@ -110,10 +110,10 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 
 | Variable | Default | Purpose |
 |----------|---------|--------|
-| `CONFIG_DIR` | `/llama_lab/config` | Config and admin files |
-| `STATE_DIR` | `/llama_lab/state` | State JSON files |
-| `LOG_DIR` | `/llama_lab/logs` | Log file directory |
-| `SECRET_DIR` | `/llama_lab/private` | Encrypted secrets (IMAP key) |
+| `CONFIG_DIR` | `/kypost/config` | Config and admin files |
+| `STATE_DIR` | `/kypost/state` | State JSON files |
+| `LOG_DIR` | `/kypost/logs` | Log file directory |
+| `SECRET_DIR` | `/kypost/private` | Encrypted secrets (IMAP key) |
 | `WEB_PORT` | `5866` | HTTP API listen port |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama service endpoint |
 | `OLLAMA_MODEL` | `nemotron-3-nano:4b` | Classification model name |
@@ -155,8 +155,10 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 | `app.log` | Go backend Logger | Structured API/app events |
 | `api.log` / `api.err.log` | supervisord | stdout/stderr of the `api` process |
 | `daemon.log` / `daemon.err.log` | supervisord | stdout/stderr of the `daemon` process |
-| `llama.log` / `llama.err.log` | supervisord | Ollama runtime output |
-| `llama-server.log` | llama adapter | Classify/warmup trace lines |
+| `ollama.log` / `ollama.err.log` | supervisord | Ollama runtime output |
+| `classifier.log` | classifier adapter | Ollama raw output |
+| `classifier-server.log` | classifier adapter | Classify/warmup trace lines |
+| `classifier.err.log` | classifier adapter | Classifier error lines |
 | `bootstrap.log` / `bootstrap.err.log` | supervisord | Bootstrap script output |
 | `supervisord.log` | supervisord | Process manager events |
 

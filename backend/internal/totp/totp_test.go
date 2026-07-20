@@ -87,7 +87,7 @@ func TestGenerateSecretDistinctBase32(t *testing.T) {
 }
 
 func TestProvisioningURI(t *testing.T) {
-	uri := ProvisioningURI("Llama Labels", "alice", "GEZDGNBVGY3TQOJQ")
+	uri := ProvisioningURI("KyPost", "alice", "GEZDGNBVGY3TQOJQ")
 	if got := uri[:len("otpauth://totp/")]; got != "otpauth://totp/" {
 		t.Fatalf("uri prefix = %q", got)
 	}

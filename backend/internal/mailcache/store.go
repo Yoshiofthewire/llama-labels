@@ -6,7 +6,7 @@ import (
 	"sort"
 	"sync"
 
-	"llama-lab/backend/internal/fsutil"
+	"kypost-server/backend/internal/fsutil"
 )
 
 // maxWindowEntries bounds how many entries a single mailbox window retains,

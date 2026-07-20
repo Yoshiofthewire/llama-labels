@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"llama-lab/backend/internal/fsutil"
+	"kypost-server/backend/internal/fsutil"
 )
 
 // Store is one user's contact-group list, persisted as groups.json alongside

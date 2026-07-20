@@ -9,12 +9,12 @@ import (
 	"strings"
 	"sync"
 
-	imapadapter "llama-lab/backend/internal/adapters/imap"
-	"llama-lab/backend/internal/contacts"
-	"llama-lab/backend/internal/groups"
-	"llama-lab/backend/internal/mailcache"
-	"llama-lab/backend/internal/rules"
-	"llama-lab/backend/internal/state"
+	imapadapter "kypost-server/backend/internal/adapters/imap"
+	"kypost-server/backend/internal/contacts"
+	"kypost-server/backend/internal/groups"
+	"kypost-server/backend/internal/mailcache"
+	"kypost-server/backend/internal/rules"
+	"kypost-server/backend/internal/state"
 )
 
 // getOrCreateUserStore returns the cached per-user store, constructing and
@@ -328,6 +328,39 @@ func (s *Server) lookupUserByDevice(deviceID string) (string, bool) {
 	defer s.userMu.Unlock()
 	userID, ok := s.deviceIndex[deviceID]
 	return userID, ok
+}
+
+// deviceIDOwnedByAnother reports whether deviceID is already registered to a
+// user other than ownerID. Native device registration accepts a client-chosen
+// DeviceID; without this check an attacker could register a device using a
+// victim's device id and hijack the global deviceIndex entry, denying the
+// victim's device service (its secret then fails against the attacker's row).
+func (s *Server) deviceIDOwnedByAnother(ownerID, deviceID string) bool {
+	owner, ok := s.lookupUserByDevice(deviceID)
+	return ok && owner != ownerID
+}
+
+// revokeUserDevices removes every paired native device for userID from both
+// the per-user store and the global deviceIndex, so an admin-driven
+// deactivate / password-reset / MFA-clear cuts off device access with the same
+// action that cuts off web sessions (see revokeUserSessions). Best-effort:
+// errors are logged, not fatal, so revocation of the primary credential still
+// succeeds.
+func (s *Server) revokeUserDevices(userID string) {
+	store, err := s.userStore(userID)
+	if err != nil {
+		s.logger.Error("failed to open store to revoke devices", "user_id", userID, "error", err.Error())
+		return
+	}
+	for _, dev := range store.ListNativeDevices() {
+		if _, err := store.RemoveNativeDevice(dev.DeviceID); err != nil {
+			s.logger.Error("failed to remove native device during revocation", "user_id", userID, "error", err.Error())
+			continue
+		}
+		s.userMu.Lock()
+		delete(s.deviceIndex, dev.DeviceID)
+		s.userMu.Unlock()
+	}
 }
 
 // rescanDeviceIndex rebuilds deviceID -> userID by reading every per-user

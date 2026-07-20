@@ -1,4 +1,4 @@
-name = "llama-labels-push-relay"
+name = "kypost-push-relay"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
 
@@ -54,7 +54,7 @@ simple = { limit = 5, period = 60 }
 # Query lifetime totals per key via the Analytics Engine SQL API. Created on deploy.
 [[analytics_engine_datasets]]
 binding = "USAGE_ANALYTICS"
-dataset = "llama_push_usage"
+dataset = "kypost_push_usage"
 
 # Secrets (set with `npx wrangler secret put <NAME>`, never commit them):
 #   FCM_CLIENT_EMAIL   - client_email from the Firebase service-account JSON

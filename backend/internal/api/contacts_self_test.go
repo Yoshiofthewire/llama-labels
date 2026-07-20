@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"llama-lab/backend/internal/contacts"
+	"kypost-server/backend/internal/contacts"
 )
 
 func TestHandleContactSelf_SetsFlagAndReturnsUpdatedContact(t *testing.T) {

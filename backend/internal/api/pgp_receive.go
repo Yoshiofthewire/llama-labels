@@ -1,9 +1,9 @@
 package api
 
 import (
-	imapadapter "llama-lab/backend/internal/adapters/imap"
-	"llama-lab/backend/internal/contacts"
-	"llama-lab/backend/internal/pgpmail"
+	imapadapter "kypost-server/backend/internal/adapters/imap"
+	"kypost-server/backend/internal/contacts"
+	"kypost-server/backend/internal/pgpmail"
 )
 
 // decryptPGPMessageContent decrypts c's PGPEncryptedPayload with userID's

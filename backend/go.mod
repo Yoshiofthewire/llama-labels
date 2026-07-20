@@ -1,4 +1,4 @@
-module llama-lab/backend
+module kypost-server/backend
 
 go 1.26.4
 

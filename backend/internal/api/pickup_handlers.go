@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"llama-lab/backend/internal/mailmsg"
+	"kypost-server/backend/internal/mailmsg"
 )
 
 // pickupLinkTTL is how long a pickup link stays valid if never viewed —

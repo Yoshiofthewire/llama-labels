@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"llama-lab/backend/internal/state"
-	"llama-lab/backend/internal/users"
+	"kypost-server/backend/internal/state"
+	"kypost-server/backend/internal/users"
 )
 
 // Headers a paired native client presents on every ongoing request (mail
@@ -47,6 +47,15 @@ func (s *Server) deviceAuthFromRequest(r *http.Request) (userID string, device s
 		return "", state.NativeDevice{}, false
 	}
 	if !users.VerifySecretHash(dev.SecretHash, deviceSecret) {
+		return "", state.NativeDevice{}, false
+	}
+	// Honor account deactivation on the device path the same way currentUser
+	// does on the session path: a deactivated (offboarded/compromised) account
+	// must lose device access immediately, not keep it until the device secret
+	// is separately purged. Without this check, deactivation/password-reset
+	// silently fail to revoke a paired device.
+	u, err := s.users.Get(ownerID)
+	if err != nil || !u.Active {
 		return "", state.NativeDevice{}, false
 	}
 	return ownerID, dev, true

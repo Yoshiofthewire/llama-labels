@@ -368,7 +368,7 @@ export function App() {
   async function moveDraggedMessages(targetMailbox: string, event: DragEvent<HTMLElement>) {
     event.preventDefault();
     setDragOverFolder("");
-    const payload = parseDragPayload(event.dataTransfer.getData("application/x-llama-mailbox"));
+    const payload = parseDragPayload(event.dataTransfer.getData("application/x-kypost-mailbox"));
     if (!payload) return;
     if (payload.mailbox.toLowerCase() === targetMailbox.toLowerCase()) return;
 
@@ -686,7 +686,7 @@ export function App() {
     <div className="shell">
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <img className="sidebar-llama-logo" src="/ky.png" alt="KyPost" style={{ width: "100%", maxWidth: 180, display: "block", margin: "0 auto 0.75rem" }} />
+          <img className="sidebar-app-logo" src="/ky.png" alt="KyPost" style={{ width: "100%", maxWidth: 180, display: "block", margin: "0 auto 0.75rem" }} />
         </div>
         <button type="button" className="new-email-button" onClick={openComposeWindow}>
           New Email

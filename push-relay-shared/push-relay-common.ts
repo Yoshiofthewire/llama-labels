@@ -126,6 +126,33 @@ export function timingSafeEqual(a: string, b: string): boolean {
   return mismatch === 0;
 }
 
+/**
+ * Buckets a client IP for anti-abuse keying. IPv4 addresses are returned
+ * unchanged; IPv6 addresses collapse to their /64 prefix. A single IPv6
+ * allocation is typically a /64 (2^64 addresses), so keying registration
+ * limits on the full 128-bit address let an attacker mint unlimited keys by
+ * sourcing each request from a fresh address in their own /64. Bucketing on
+ * the /64 makes one allocation count as one source.
+ */
+export function ipBucket(ip: string): string {
+  const trimmed = ip.trim();
+  if (!trimmed.includes(":")) {
+    return trimmed; // IPv4 (or empty) — use as-is
+  }
+  // Strip any zone id and expand "::" to reconstruct the first four hextets.
+  const addr = trimmed.split("%")[0];
+  const [head, tail] = addr.split("::");
+  const headGroups = head ? head.split(":").filter((g) => g !== "") : [];
+  const tailGroups = tail ? tail.split(":").filter((g) => g !== "") : [];
+  const missing = 8 - (headGroups.length + tailGroups.length);
+  const groups =
+    tail === undefined
+      ? headGroups
+      : [...headGroups, ...Array(Math.max(0, missing)).fill("0"), ...tailGroups];
+  const prefix = [0, 1, 2, 3].map((i) => (groups[i] ?? "0").toLowerCase());
+  return prefix.join(":") + "::/64";
+}
+
 export async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -186,10 +213,44 @@ export async function checkTokenBinding(env: CommonEnv, token: string, keyId: st
   return { allowed: false, reason: "token is already bound to a different active api key" };
 }
 
-/** Claims token for keyId. Call only after a send actually succeeds. */
+/** Claims token for keyId. */
 export async function bindToken(env: CommonEnv, token: string, keyId: string): Promise<void> {
   const tokenHash = await sha256Hex(token);
   await env.API_KEYS.put(BOUND_TOKEN_PREFIX + tokenHash, keyId);
+}
+
+/** Releases token's claim (used to roll back a pre-send claim on a dead token). */
+export async function releaseToken(env: CommonEnv, token: string): Promise<void> {
+  const tokenHash = await sha256Hex(token);
+  await env.API_KEYS.delete(BOUND_TOKEN_PREFIX + tokenHash);
+}
+
+export type ClaimResult =
+  | { allowed: true; newlyClaimed: boolean }
+  | { allowed: false; reason: string };
+
+/**
+ * Checks the token binding and, when the token is unclaimed, claims it for
+ * keyId BEFORE delivery. Claiming before the send (rather than after, in a
+ * post-delivery waitUntil) prevents a first-sender from delivering a spoofed
+ * push to an unclaimed token ahead of the legitimate owner's claim. KV is
+ * eventually consistent, so this narrows but cannot fully eliminate a
+ * simultaneous-first-send race; a strongly-consistent store (Durable Object)
+ * would be needed for that. `newlyClaimed` lets the caller release the claim
+ * if delivery then reveals the token is dead (stale/invalid).
+ */
+export async function claimTokenForSend(env: CommonEnv, token: string, keyId: string): Promise<ClaimResult> {
+  const result = await checkTokenBinding(env, token, keyId);
+  if (!result.allowed) {
+    return result;
+  }
+  const tokenHash = await sha256Hex(token);
+  const existing = await env.API_KEYS.get(BOUND_TOKEN_PREFIX + tokenHash);
+  if (existing === keyId) {
+    return { allowed: true, newlyClaimed: false };
+  }
+  await bindToken(env, token, keyId);
+  return { allowed: true, newlyClaimed: true };
 }
 
 // ---- per-key rate limits ---------------------------------------------------
@@ -353,7 +414,10 @@ export async function handleRegister(request: Request, rc: RequestContext): Prom
   if (!registrationEnabled(env)) {
     return fail(rc, 403, "self-registration is disabled");
   }
-  const registeredIp = request.headers.get("CF-Connecting-IP");
+  const rawIp = request.headers.get("CF-Connecting-IP");
+  // Bucket on the /64 for IPv6 so a single allocation can't defeat the per-IP
+  // registration limit and one-key-per-IP rule by rotating source addresses.
+  const registeredIp = rawIp ? ipBucket(rawIp) : rawIp;
   if (registeredIp && !(await checkMinuteLimit(env.REGISTER_RATE_LIMITER, rc, registeredIp))) {
     rc.log({ level: "warn", event: "register.denied", reason: "rate_limited", ip: registeredIp });
     const response = fail(rc, 429, "too many registration attempts, try again later", {

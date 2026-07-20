@@ -1,9 +1,9 @@
 /**
- * Llama Labels push relay — a Cloudflare Worker that centralizes FCM delivery.
+ * KyPost push relay — a Cloudflare Worker that centralizes FCM delivery.
  *
  * The published mobile app is bound at build time to a single Firebase project.
  * This Worker holds that project's service account (as secrets) and delivers
- * push notifications on behalf of many self-hosted Llama Labels servers, each
+ * push notifications on behalf of many self-hosted KyPost servers, each
  * authenticated with its own API key. Self-hosters therefore never need a
  * Firebase account and never recompile the app.
  *
@@ -38,14 +38,14 @@ import {
   KEY_PREFIX,
   RequestContext,
   bearer,
-  bindToken,
   checkMinuteLimit,
-  checkTokenBinding,
+  claimTokenForSend,
   createRelayFetchHandler,
   fail,
   isExpired,
   json,
   recordUsageAnalytics,
+  releaseToken,
   resolveLimit,
   sha256Hex,
 } from "../../push-relay-shared/push-relay-common";
@@ -102,7 +102,7 @@ async function handleSend(request: Request, rc: RequestContext<Env>): Promise<Re
     return fail(rc, 400, "missing token");
   }
 
-  const binding = await checkTokenBinding(env, token, record.id);
+  const binding = await claimTokenForSend(env, token, record.id);
   if (!binding.allowed) {
     rc.log({ level: "warn", event: "send.denied", reason: "token_bound_to_other_key", keyId: record.id });
     return fail(rc, 403, binding.reason);
@@ -146,13 +146,20 @@ async function handleSend(request: Request, rc: RequestContext<Env>): Promise<Re
   }
 
   if (result.ok) {
+    // The token was already claimed for this key before delivery.
     rc.log({ level: "info", event: "send.ok", keyId: record.id });
-    rc.ctx.waitUntil(bindToken(env, token, record.id));
     return json({ ok: true });
   }
   if (result.stale) {
+    // Dead token: roll back a claim we made this request so it doesn't linger.
+    if (binding.newlyClaimed) {
+      rc.ctx.waitUntil(releaseToken(env, token));
+    }
     rc.log({ level: "info", event: "send.stale", keyId: record.id, fcmStatus: result.status });
     return json({ stale: true, requestId: rc.requestId }, 410);
+  }
+  if (binding.newlyClaimed) {
+    rc.ctx.waitUntil(releaseToken(env, token));
   }
   rc.log({ level: "error", event: "send.fcm_failed", keyId: record.id, fcmStatus: result.status });
   return fail(rc, 502, `fcm send failed: status=${result.status} response=${result.detail}`);

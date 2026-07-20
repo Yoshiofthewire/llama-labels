@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"llama-lab/backend/internal/users"
+	"kypost-server/backend/internal/users"
 )
 
 // totpCodeForTest independently computes a 6-digit TOTP for a base32 secret at
@@ -91,6 +91,9 @@ func doJSONAuth(srv *Server, handler http.HandlerFunc, method, path string, payl
 	srv.mu.Lock()
 	srv.sessions[token] = Session{UserID: userID, ExpiresAt: time.Now().Add(24 * time.Hour), CSRFToken: csrfToken}
 	srv.mu.Unlock()
+	// Model an onboarded session; the must-change gate (withAuth) is exercised
+	// by its own dedicated test.
+	_, _ = srv.users.ClearMustChangePassword(userID)
 
 	var body *bytes.Reader
 	if payload != nil {
@@ -100,7 +103,7 @@ func doJSONAuth(srv *Server, handler http.HandlerFunc, method, path string, payl
 		body = bytes.NewReader(nil)
 	}
 	req := httptest.NewRequest(method, path, body)
-	req.AddCookie(&http.Cookie{Name: "llama_session", Value: token})
+	req.AddCookie(&http.Cookie{Name: "kypost_session", Value: token})
 	req.Header.Set("X-CSRF-Token", csrfToken)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
@@ -144,8 +147,8 @@ func TestTOTPEnrollmentAndLoginFlow(t *testing.T) {
 		t.Fatalf("mfa/totp: status=%d body=%s", totpRec.Code, totpRec.Body.String())
 	}
 	cookies := totpRec.Result().Cookies()
-	if findCookie(cookies, "llama_session") == nil {
-		t.Fatalf("expected a llama_session cookie after second factor, got %+v", cookies)
+	if findCookie(cookies, "kypost_session") == nil {
+		t.Fatalf("expected a kypost_session cookie after second factor, got %+v", cookies)
 	}
 
 	// Replay: reusing the same challenge is rejected.

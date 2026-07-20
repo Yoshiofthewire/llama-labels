@@ -11,7 +11,7 @@ import (
 
 	"github.com/ProtonMail/gopenpgp/v3/crypto"
 
-	"llama-lab/backend/internal/mailmsg"
+	"kypost-server/backend/internal/mailmsg"
 )
 
 // extractOctetStreamPart is a test-only MIME walker that finds the armored

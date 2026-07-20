@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"llama-lab/backend/internal/users"
+	"kypost-server/backend/internal/users"
 )
 
 // newTestUsers returns the bootstrap admin plus a fresh non-admin user.
@@ -210,7 +210,7 @@ func TestLastActiveAdminIsProtected(t *testing.T) {
 	}
 }
 
-func TestConfigPutRejectsNonAdminLlamaChange(t *testing.T) {
+func TestConfigPutRejectsNonAdminClassifierChange(t *testing.T) {
 	srv := newTestServer(t)
 	srv.configPath = filepath.Join(t.TempDir(), "config.yaml")
 	_, regular := newTestUsers(t, srv)
@@ -230,28 +230,28 @@ func TestConfigPutRejectsNonAdminLlamaChange(t *testing.T) {
 		t.Fatalf("unmarshal config: %v", err)
 	}
 
-	// Non-admin PUT with untouched Llama settings is allowed.
+	// Non-admin PUT with untouched Classifier settings is allowed.
 	body, _ := json.Marshal(cfg)
 	req = httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
 	authRequestAs(srv, req, regular.ID)
 	rec = httptest.NewRecorder()
 	protected(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("non-admin PUT without llama change: status = %d, body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("non-admin PUT without classifier change: status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 
-	// Non-admin PUT that changes Llama settings is rejected with 403.
-	cfg["llama"] = map[string]any{"baseUrl": "http://evil.example", "apiKey": "x", "classifyPath": "/"}
+	// Non-admin PUT that changes Classifier settings is rejected with 403.
+	cfg["classifier"] = map[string]any{"baseUrl": "http://evil.example", "apiKey": "x", "classifyPath": "/"}
 	body, _ = json.Marshal(cfg)
 	req = httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
 	authRequestAs(srv, req, regular.ID)
 	rec = httptest.NewRecorder()
 	protected(rec, req)
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("non-admin PUT with llama change: status = %d, want 403, body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("non-admin PUT with classifier change: status = %d, want 403, body=%s", rec.Code, rec.Body.String())
 	}
 
-	// Admin PUT changing Llama settings is allowed.
+	// Admin PUT changing Classifier settings is allowed.
 	all, _ := srv.users.List()
 	var adminID string
 	for _, u := range all {
@@ -265,6 +265,6 @@ func TestConfigPutRejectsNonAdminLlamaChange(t *testing.T) {
 	rec = httptest.NewRecorder()
 	protected(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("admin PUT with llama change: status = %d, body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("admin PUT with classifier change: status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 }

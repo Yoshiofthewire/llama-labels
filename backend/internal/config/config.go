@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"llama-lab/backend/internal/fsutil"
+	"kypost-server/backend/internal/fsutil"
 
 	"gopkg.in/yaml.v3"
 )
@@ -51,11 +51,11 @@ type Config struct {
 	Timezone string `yaml:"timezone" json:"timezone"`
 	LogLevel string `yaml:"logLevel" json:"logLevel"`
 
-	Llama struct {
+	Classifier struct {
 		BaseURL      string `yaml:"baseUrl" json:"baseUrl"`
 		APIKey       string `yaml:"apiKey" json:"apiKey"`
 		ClassifyPath string `yaml:"classifyPath" json:"classifyPath"`
-	} `yaml:"llama" json:"llama"`
+	} `yaml:"classifier" json:"classifier"`
 
 	Scan struct {
 		IntervalSeconds int `yaml:"intervalSeconds" json:"intervalSeconds"`
@@ -174,10 +174,10 @@ func Default() Config {
 		Timezone: "America/New_York",
 		LogLevel: "info",
 	}
-	// Empty means "fall back to the OLLAMA_* env vars"; see newLlamaClient.
-	cfg.Llama.BaseURL = ""
-	cfg.Llama.APIKey = ""
-	cfg.Llama.ClassifyPath = ""
+	// Empty means "fall back to the OLLAMA_* env vars"; see newClassifierClient.
+	cfg.Classifier.BaseURL = ""
+	cfg.Classifier.APIKey = ""
+	cfg.Classifier.ClassifyPath = ""
 	cfg.Scan.IntervalSeconds = 90
 	cfg.RateLimits.PerMinute = 10
 	cfg.RateLimits.PerHour = 20

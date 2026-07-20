@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"llama-lab/backend/internal/config"
-	"llama-lab/backend/internal/logging"
-	"llama-lab/backend/internal/users"
+	"kypost-server/backend/internal/config"
+	"kypost-server/backend/internal/logging"
+	"kypost-server/backend/internal/users"
 )
 
 func TestMigrateLegacySingleUserData(t *testing.T) {

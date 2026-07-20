@@ -13,28 +13,28 @@ import (
 	"syscall"
 	"time"
 
-	"llama-lab/backend/internal/adapters/llama"
-	"llama-lab/backend/internal/api"
-	"llama-lab/backend/internal/config"
-	"llama-lab/backend/internal/health"
-	"llama-lab/backend/internal/logging"
-	"llama-lab/backend/internal/processor"
-	"llama-lab/backend/internal/state"
-	"llama-lab/backend/internal/users"
+	"kypost-server/backend/internal/adapters/classifier"
+	"kypost-server/backend/internal/api"
+	"kypost-server/backend/internal/config"
+	"kypost-server/backend/internal/health"
+	"kypost-server/backend/internal/logging"
+	"kypost-server/backend/internal/processor"
+	"kypost-server/backend/internal/state"
+	"kypost-server/backend/internal/users"
 )
 
 // Run dispatches the process mode and blocks until shutdown for long-running modes.
 func Run(args []string) error {
-	fs := flag.NewFlagSet("llama-lab", flag.ContinueOnError)
+	fs := flag.NewFlagSet("kypost-server", flag.ContinueOnError)
 	mode := fs.String("mode", "all", "process mode: daemon, server, all")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	paths := config.Paths{
-		ConfigFile: filepath.Join(config.EnvOrDefault("CONFIG_DIR", "/llama_lab/config"), "config.yaml"),
-		StateDir:   config.EnvOrDefault("STATE_DIR", "/llama_lab/state"),
-		LogDir:     config.EnvOrDefault("LOG_DIR", "/llama_lab/logs"),
+		ConfigFile: filepath.Join(config.EnvOrDefault("CONFIG_DIR", "/kypost/config"), "config.yaml"),
+		StateDir:   config.EnvOrDefault("STATE_DIR", "/kypost/state"),
+		LogDir:     config.EnvOrDefault("LOG_DIR", "/kypost/logs"),
 	}
 
 	// Capture legacy notification prefs before LoadOrInit rewrites
@@ -56,7 +56,7 @@ func Run(args []string) error {
 
 	// Auto-populate label allowlist from TUNING.md when the config has none.
 	if len(cfg.Labels.Allowlist) == 0 {
-		if labels := llama.ParseAllowedLabels(llama.LoadTuningText()); len(labels) > 0 {
+		if labels := classifier.ParseAllowedLabels(classifier.LoadTuningText()); len(labels) > 0 {
 			cfg.Labels.Allowlist = labels
 		}
 	}
@@ -72,7 +72,7 @@ func Run(args []string) error {
 		return fmt.Errorf("create state store: %w", err)
 	}
 
-	configDir := config.EnvOrDefault("CONFIG_DIR", "/llama_lab/config")
+	configDir := config.EnvOrDefault("CONFIG_DIR", "/kypost/config")
 	usersStore, err := users.LoadOrMigrate(configDir, filepath.Join(configDir, "admin.env"))
 	if err != nil {
 		return fmt.Errorf("load users store: %w", err)
@@ -122,13 +122,13 @@ type runDeps struct {
 }
 
 func runDaemon(d runDeps) error {
-	llamaClient := newLlamaClient(d.cfg)
-	poller, err := processor.New(d.cfg, d.logger, d.store, d.users, d.stateDir, d.configDir, d.health, llamaClient)
+	classifierClient := newClassifierClient(d.cfg)
+	poller, err := processor.New(d.cfg, d.logger, d.store, d.users, d.stateDir, d.configDir, d.health, classifierClient)
 	if err != nil {
 		return err
 	}
 	poller.SetConfigPath(d.configPath)
-	warmupLlamaOnStartup(d.logger, llamaClient, poller)
+	warmupClassifierOnStartup(d.logger, classifierClient, poller)
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	go poller.Run()
@@ -151,15 +151,15 @@ func runAll(d runDeps) error {
 	if exhausted, at := d.store.AICreditsExhausted(); exhausted {
 		d.health.SetAICreditsExhausted(at)
 	}
-	llamaClient := newLlamaClient(d.cfg)
-	poller, err := processor.New(d.cfg, d.logger, d.store, d.users, d.stateDir, d.configDir, d.health, llamaClient)
+	classifierClient := newClassifierClient(d.cfg)
+	poller, err := processor.New(d.cfg, d.logger, d.store, d.users, d.stateDir, d.configDir, d.health, classifierClient)
 	if err != nil {
 		return err
 	}
 	poller.SetConfigPath(d.configPath)
 	srv := api.NewServer(d.cfg, d.logger, d.health, d.users, poller.UpdateConfig)
 	srv.SetPoller(poller)
-	warmupLlamaOnStartup(d.logger, llamaClient, poller)
+	warmupClassifierOnStartup(d.logger, classifierClient, poller)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -226,34 +226,34 @@ func monitorHealth(logger *logging.Logger, healthSvc *health.Service) {
 	}
 }
 
-// newLlamaClient builds the one shared LLM client. config.yaml wins when it
+// newClassifierClient builds the one shared LLM client. config.yaml wins when it
 // points somewhere real; the OLLAMA_* env vars are the fallback so existing
 // env-only deployments keep working. The persisted legacy config default
 // ("http://127.0.0.1:3333" with path "/") predates the Ollama runtime and
 // is treated as unset.
-func newLlamaClient(cfg config.Config) *llama.HTTPClient {
+func newClassifierClient(cfg config.Config) *classifier.HTTPClient {
 	const legacyDeadDefault = "http://127.0.0.1:3333"
 
-	baseURL := strings.TrimSpace(cfg.Llama.BaseURL)
+	baseURL := strings.TrimSpace(cfg.Classifier.BaseURL)
 	fromConfig := baseURL != "" && baseURL != legacyDeadDefault
 	if !fromConfig {
 		baseURL = strings.TrimSpace(os.Getenv("OLLAMA_BASE_URL"))
 		if baseURL == "" {
-			baseURL = strings.TrimSpace(os.Getenv("LLAMA_BASE_URL"))
+			baseURL = strings.TrimSpace(os.Getenv("CLASSIFIER_BASE_URL"))
 		}
 		if baseURL == "" {
 			baseURL = "http://127.0.0.1:11434"
 		}
 	}
 
-	apiKey := strings.TrimSpace(cfg.Llama.APIKey)
+	apiKey := strings.TrimSpace(cfg.Classifier.APIKey)
 	if apiKey == "" {
 		apiKey = strings.TrimSpace(os.Getenv("OLLAMA_API_KEY"))
 	}
 
 	classifyPath := ""
 	if fromConfig {
-		classifyPath = strings.TrimSpace(cfg.Llama.ClassifyPath)
+		classifyPath = strings.TrimSpace(cfg.Classifier.ClassifyPath)
 	}
 	if classifyPath == "" || classifyPath == "/" {
 		classifyPath = strings.TrimSpace(os.Getenv("OLLAMA_GENERATE_PATH"))
@@ -264,20 +264,20 @@ func newLlamaClient(cfg config.Config) *llama.HTTPClient {
 
 	// The default tuning text only backstops callers that pass no per-call
 	// tuning (e.g. users who have not customized their prompt yet).
-	tuning := llama.LoadTuningText()
-	return llama.NewHTTPClient(baseURL, apiKey, classifyPath, tuning, 3*time.Minute)
+	tuning := classifier.LoadTuningText()
+	return classifier.NewHTTPClient(baseURL, apiKey, classifyPath, tuning, 3*time.Minute)
 }
 
-func warmupLlamaOnStartup(logger *logging.Logger, client *llama.HTTPClient, poller *processor.Poller) {
+func warmupClassifierOnStartup(logger *logging.Logger, client *classifier.HTTPClient, poller *processor.Poller) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		logger.Info("llama startup warmup requested")
+		logger.Info("classifier startup warmup requested")
 		if err := client.Warmup(ctx); err != nil {
-			logger.Error("llama startup warmup failed", "error", err.Error())
+			logger.Error("classifier startup warmup failed", "error", err.Error())
 			return
 		}
-		logger.Info("llama startup warmup completed")
+		logger.Info("classifier startup warmup completed")
 		logger.Info("processing unread unlabeled mail after startup warmup")
 		poller.TriggerUnreadSweep()
 	}()

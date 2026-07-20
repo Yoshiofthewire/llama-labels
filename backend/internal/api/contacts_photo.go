@@ -15,8 +15,8 @@ import (
 	"os"
 	"strings"
 
-	"llama-lab/backend/internal/contacts"
-	"llama-lab/backend/internal/fsutil"
+	"kypost-server/backend/internal/contacts"
+	"kypost-server/backend/internal/fsutil"
 )
 
 const maxContactPhotoBytes = 5 << 20 // 5MB

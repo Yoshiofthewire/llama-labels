@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"llama-lab/backend/internal/config"
-	"llama-lab/backend/internal/health"
-	"llama-lab/backend/internal/state"
+	"kypost-server/backend/internal/config"
+	"kypost-server/backend/internal/health"
+	"kypost-server/backend/internal/state"
 
 	"github.com/SherClockHolmes/webpush-go"
 )
