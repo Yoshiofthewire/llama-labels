@@ -5,14 +5,14 @@ RUN cd backend && go mod download
 COPY backend ./backend
 RUN cd backend && go build -o /app/bin/kypost-server ./cmd/main.go
 
-FROM node:26.3.0-slim AS frontend-builder
+FROM node:26.5.0-slim AS frontend-builder
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm install
 COPY frontend .
 RUN npm run build
 
-FROM node:26.3.0-slim
+FROM node:26.5.0-slim
 # liblzma5 and tar are explicitly upgraded (not just pulled from the base
 # image as-is) to pick up any Debian security fixes published after this
 # base image tag was built — apt-get install re-resolves already-installed
@@ -21,6 +21,13 @@ RUN apt-get update \
 	&& apt-get install -y --no-install-recommends supervisor tzdata curl ca-certificates zstd liblzma5 tar \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& useradd -m -s /bin/bash kypost
+
+# npm itself is never invoked at runtime here (only the `node` interpreter
+# is, via scripts/bootstrap.sh), but the base image ships npm with its own
+# bundled, independently-versioned undici copy that lags well behind
+# Node's own runtime undici — upgrade it explicitly rather than leave an
+# unused CLI tool sitting in the image with a vulnerable dependency.
+RUN npm install -g npm@12.0.1
 
 WORKDIR /opt/kypost
 COPY --from=backend-builder /app/bin/kypost-server /usr/local/bin/kypost-server
