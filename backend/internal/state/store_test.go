@@ -5,6 +5,48 @@ import (
 	"time"
 )
 
+func TestSetOllamaUpdateNotifiedFiresOncePerVersion(t *testing.T) {
+	dir := t.TempDir()
+	store, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	notify, err := store.SetOllamaUpdateNotified("0.32.2")
+	if err != nil {
+		t.Fatalf("SetOllamaUpdateNotified (first): %v", err)
+	}
+	if !notify {
+		t.Fatal("expected notify=true the first time a new upstream version is recorded")
+	}
+
+	notify, err = store.SetOllamaUpdateNotified("0.32.2")
+	if err != nil {
+		t.Fatalf("SetOllamaUpdateNotified (repeat): %v", err)
+	}
+	if notify {
+		t.Fatal("expected notify=false when the same version is recorded again")
+	}
+
+	// A second Store instance rooted at the same dir (mirrors the
+	// server/daemon process split) must see the persisted notification too.
+	other, err := New(dir)
+	if err != nil {
+		t.Fatalf("New (second instance): %v", err)
+	}
+	if notify, err := other.SetOllamaUpdateNotified("0.32.2"); err != nil || notify {
+		t.Fatalf("second instance: notify=%v, err=%v; want notify=false (already recorded on disk)", notify, err)
+	}
+
+	notify, err = other.SetOllamaUpdateNotified("0.33.0")
+	if err != nil {
+		t.Fatalf("SetOllamaUpdateNotified (newer version): %v", err)
+	}
+	if !notify {
+		t.Fatal("expected notify=true when a genuinely newer upstream version appears")
+	}
+}
+
 func TestNotificationSubscriptionsSyncAcrossStoreInstances(t *testing.T) {
 	dir := t.TempDir()
 

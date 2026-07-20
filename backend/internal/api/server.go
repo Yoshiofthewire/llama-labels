@@ -29,8 +29,8 @@ import (
 	"syscall"
 	"time"
 
-	imapadapter "kypost-server/backend/internal/adapters/imap"
 	"kypost-server/backend/internal/adapters/classifier"
+	imapadapter "kypost-server/backend/internal/adapters/imap"
 	"kypost-server/backend/internal/captcha"
 	"kypost-server/backend/internal/config"
 	"kypost-server/backend/internal/contacts"
@@ -99,9 +99,21 @@ type Server struct {
 	loginLockout         *failureLockout
 	davLockout           *failureLockout
 	mfaLockout           *failureLockout
+	mfaPushCooldown      *mfaPushCooldown
 	captchaVerifier      captcha.Verifier
 	captchaProvider      captcha.Provider
 	captchaSiteKey       string
+
+	// classifier and globalStore back the Ollama version/update-check block on
+	// the Prompt Tuning page and its admin-notification email. classifier is
+	// nil until SetClassifier is called (see app.go); globalStore is the
+	// install-wide (not per-user) state.Store rooted at stateDir itself, used
+	// only to dedupe the upgrade-available email to one per newly-seen
+	// upstream release.
+	classifier   *classifier.HTTPClient
+	globalStore  *state.Store
+	ollamaMu     sync.Mutex
+	ollamaStatus ollamaVersionStatus
 
 	// Per-user resources, lazily created and cached. userMu also guards the
 	// subscriberID -> userID index used by the unauthenticated native
@@ -144,6 +156,14 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		captchaVerifier = misconfiguredCaptchaVerifier{err: err}
 	}
 
+	globalStore, err := state.New(stateDir)
+	if err != nil {
+		// Only the Ollama-update-notification dedup relies on this; losing it
+		// just means a possible duplicate email, never a reason to fail startup.
+		logger.Error("failed to open global state store; ollama update emails may repeat", "error", err.Error())
+		globalStore = nil
+	}
+
 	return &Server{
 		cfg:                  cfg,
 		onConfigUpdated:      onConfigUpdated,
@@ -175,9 +195,11 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		loginLockout:         newLoginLockout(),
 		davLockout:           newFailureLockout(davMaxFailures, davLockoutFor),
 		mfaLockout:           newFailureLockout(mfaMaxFailures, mfaLockoutFor),
+		mfaPushCooldown:      newMfaPushCooldown(),
 		captchaVerifier:      captchaVerifier,
 		captchaProvider:      captchaProvider,
 		captchaSiteKey:       captchaSiteKey,
+		globalStore:          globalStore,
 	}
 }
 
@@ -254,6 +276,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/mail/attachments", s.withMailAuth(s.handleMailAttachmentList))
 	mux.HandleFunc("GET /api/mail/attachment", s.withMailAuth(s.handleMailAttachmentDownload))
 	mux.HandleFunc("POST /api/classifier/test", s.withAdmin(s.handleClassifierTest))
+	mux.HandleFunc("GET /api/ollama/version", s.withAuth(s.handleOllamaVersion))
 	mux.HandleFunc("GET /api/tuning", s.withAuth(s.handleTuning))
 	mux.HandleFunc("PUT /api/tuning", s.withAuth(s.handleTuning))
 	mux.HandleFunc("GET /api/notifications/preferences", s.withAuth(s.handleNotificationPreferences))
@@ -3214,7 +3237,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		if u.PushMFAEnabled {
 			methods = append(methods, "push")
-			go s.dispatchPushChallenge(u.ID, ch.ID)
+			// Rate-limit the push itself, not challenge creation or login: a user who
+			// mistyped a TOTP code must still be able to retry, but repeated logins
+			// within the cooldown window reuse the existing push rather than fanning
+			// another one out — see mfaPushCooldown's doc for why.
+			if allowed, _ := s.mfaPushCooldown.allowed(u.ID); allowed {
+				s.mfaPushCooldown.recordSent(u.ID)
+				go s.dispatchPushChallenge(u.ID, ch.ID)
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"mfaRequired": true,

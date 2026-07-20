@@ -48,6 +48,15 @@ func newTestServer(t *testing.T) *Server {
 	// it must be rebuilt here against the temp dirs or pickup tests would
 	// try to write outside the sandbox.
 	srv.pickupStore = pgpmail.NewPickupStore(filepath.Join(stateDir, "pickup"), filepath.Join(configDir, "pickup-store.key"))
+	// NewServer likewise wires globalStore to the process-default /kypost/...
+	// path at construction time, before stateDir above gets overridden — rebuild
+	// it against the temp dir so ollama-update-notification tests don't depend
+	// on (and fail to write to) the real /kypost/state path.
+	globalStore, err := state.New(stateDir)
+	if err != nil {
+		t.Fatalf("state.New: %v", err)
+	}
+	srv.globalStore = globalStore
 	return srv
 }
 

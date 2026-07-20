@@ -30,6 +30,14 @@ type Decision = {
   atUtc: string;
 };
 
+type OllamaVersionResponse = {
+  installedVersion: string;
+  latestVersion: string;
+  upgradeAvailable: boolean;
+  checkedAt?: string;
+  error?: string;
+};
+
 export function TuningPage() {
   const [tuningText, setTuningText] = useState("");
   const [tuningStatus, setTuningStatus] = useState("");
@@ -39,6 +47,8 @@ export function TuningPage() {
   const [decisionsError, setDecisionsError] = useState("");
   const [autoApplyEnabled, setAutoApplyEnabled] = useState(true);
   const [labelPrefsStatus, setLabelPrefsStatus] = useState("");
+  const [ollamaVersion, setOllamaVersion] = useState<OllamaVersionResponse | null>(null);
+  const [ollamaVersionError, setOllamaVersionError] = useState("");
 
   async function toggleAutoApply(enabled: boolean) {
     const previous = autoApplyEnabled;
@@ -84,6 +94,15 @@ export function TuningPage() {
   }, []);
 
   useEffect(() => {
+    getJSON<OllamaVersionResponse>("/api/ollama/version")
+      .then((data) => {
+        setOllamaVersion(data);
+        setOllamaVersionError("");
+      })
+      .catch(() => setOllamaVersionError("Checking installed Ollama version..."));
+  }, []);
+
+  useEffect(() => {
     if (activeTab === "decisions" && !decisionsLoaded) {
       getJSON<Decision[]>("/api/decisions?limit=500")
         .then((data) => {
@@ -102,6 +121,26 @@ export function TuningPage() {
 
   return (
     <section className="panel">
+      <div style={{ marginBottom: "1.5em" }}>
+        <h2>Ollama Version</h2>
+        {ollamaVersion ? (
+          <>
+            <p>Installed version: {ollamaVersion.installedVersion || "unknown"}</p>
+            {ollamaVersion.upgradeAvailable ? (
+              <p className="notice notice-warning">
+                A newer Ollama version ({ollamaVersion.latestVersion}) is available upstream. This container
+                doesn't update itself — rebuild and redeploy it to pick up the newer Ollama. The admin has
+                been emailed about this.
+              </p>
+            ) : (
+              <p className="config-muted">You're running the latest available Ollama version.</p>
+            )}
+          </>
+        ) : (
+          <p className="config-muted">{ollamaVersionError || "Loading Ollama version..."}</p>
+        )}
+      </div>
+
       <div className="config-tabs" role="tablist" aria-label="Tuning sections">
         <button type="button" role="tab" aria-selected={activeTab === "prompt"} className={`config-tab${activeTab === "prompt" ? " active" : ""}`} onClick={() => setActiveTab("prompt")}>TUNING.md</button>
         <button type="button" role="tab" aria-selected={activeTab === "decisions"} className={`config-tab${activeTab === "decisions" ? " active" : ""}`} onClick={() => setActiveTab("decisions")}>Decisions</button>

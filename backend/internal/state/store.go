@@ -30,12 +30,13 @@ type Store struct {
 	pullSeq            int64
 	pullDirty          bool
 
-	aiCreditsExhausted   bool
-	aiCreditsExhaustedAt string
-	desktopPairingCodes map[string]string // code -> expiresAt (RFC3339)
-	pairingCodesDirty   bool
-	desktopPairingAttempts []PairingAttempt // tracks failed pairing attempts for rate limiting
-	pairingAttemptsDirty   bool
+	aiCreditsExhausted          bool
+	aiCreditsExhaustedAt        string
+	ollamaUpdateNotifiedVersion string
+	desktopPairingCodes         map[string]string // code -> expiresAt (RFC3339)
+	pairingCodesDirty           bool
+	desktopPairingAttempts      []PairingAttempt // tracks failed pairing attempts for rate limiting
+	pairingAttemptsDirty        bool
 }
 
 type PairingAttempt struct {
@@ -121,18 +122,19 @@ type PullNotification struct {
 }
 
 type stateFile struct {
-	LastCheckpoint         string                     `json:"lastCheckpoint"`
-	Processed              map[string]string          `json:"processed"`
-	Notifications          []NotificationSubscription `json:"notifications,omitempty"`
-	NativeDevices          []NativeDevice             `json:"nativeDevices,omitempty"`
-	SubscriberID           string                     `json:"subscriberId,omitempty"`
-	NativeDeliveryMode     string                     `json:"nativeDeliveryMode,omitempty"`
-	PullNotifications      []PullNotification         `json:"pullNotifications,omitempty"`
-	PullSeq                int64                      `json:"pullSeq,omitempty"`
-	AICreditsExhausted     bool                       `json:"aiCreditsExhausted,omitempty"`
-	AICreditsExhaustedAt   string                     `json:"aiCreditsExhaustedAt,omitempty"`
-	DesktopPairingCodes    map[string]string          `json:"desktopPairingCodes,omitempty"`
-	DesktopPairingAttempts []PairingAttempt           `json:"desktopPairingAttempts,omitempty"`
+	LastCheckpoint              string                     `json:"lastCheckpoint"`
+	Processed                   map[string]string          `json:"processed"`
+	Notifications               []NotificationSubscription `json:"notifications,omitempty"`
+	NativeDevices               []NativeDevice             `json:"nativeDevices,omitempty"`
+	SubscriberID                string                     `json:"subscriberId,omitempty"`
+	NativeDeliveryMode          string                     `json:"nativeDeliveryMode,omitempty"`
+	PullNotifications           []PullNotification         `json:"pullNotifications,omitempty"`
+	PullSeq                     int64                      `json:"pullSeq,omitempty"`
+	AICreditsExhausted          bool                       `json:"aiCreditsExhausted,omitempty"`
+	AICreditsExhaustedAt        string                     `json:"aiCreditsExhaustedAt,omitempty"`
+	OllamaUpdateNotifiedVersion string                     `json:"ollamaUpdateNotifiedVersion,omitempty"`
+	DesktopPairingCodes         map[string]string          `json:"desktopPairingCodes,omitempty"`
+	DesktopPairingAttempts      []PairingAttempt           `json:"desktopPairingAttempts,omitempty"`
 }
 
 func New(baseDir string) (*Store, error) {
@@ -140,9 +142,9 @@ func New(baseDir string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{
-		baseDir:                 baseDir,
-		processedSet:            map[string]time.Time{},
-		decisions:               []Decision{},
+		baseDir:                baseDir,
+		processedSet:           map[string]time.Time{},
+		decisions:              []Decision{},
 		desktopPairingCodes:    map[string]string{},
 		desktopPairingAttempts: []PairingAttempt{},
 	}
@@ -183,6 +185,7 @@ func (s *Store) applyStateFile(sf stateFile) {
 	s.checkpoint = sf.LastCheckpoint
 	s.aiCreditsExhausted = sf.AICreditsExhausted
 	s.aiCreditsExhaustedAt = sf.AICreditsExhaustedAt
+	s.ollamaUpdateNotifiedVersion = sf.OllamaUpdateNotifiedVersion
 	s.subscriberID = strings.TrimSpace(sf.SubscriberID)
 	s.notifications = append([]NotificationSubscription{}, sf.Notifications...)
 	s.notificationsDirty = false
@@ -518,18 +521,19 @@ func (s *Store) persistLocked() error {
 		processed[id] = ts.Format(time.RFC3339)
 	}
 	b, err := json.MarshalIndent(stateFile{
-		LastCheckpoint:         s.checkpoint,
-		Processed:              processed,
-		Notifications:          s.notifications,
-		NativeDevices:          s.nativeDevices,
-		SubscriberID:           s.subscriberID,
-		NativeDeliveryMode:     s.nativeDeliveryMode,
-		PullNotifications:      s.pullNotifications,
-		PullSeq:                s.pullSeq,
-		AICreditsExhausted:     s.aiCreditsExhausted,
-		AICreditsExhaustedAt:   s.aiCreditsExhaustedAt,
-		DesktopPairingCodes:    s.desktopPairingCodes,
-		DesktopPairingAttempts: s.desktopPairingAttempts,
+		LastCheckpoint:              s.checkpoint,
+		Processed:                   processed,
+		Notifications:               s.notifications,
+		NativeDevices:               s.nativeDevices,
+		SubscriberID:                s.subscriberID,
+		NativeDeliveryMode:          s.nativeDeliveryMode,
+		PullNotifications:           s.pullNotifications,
+		PullSeq:                     s.pullSeq,
+		AICreditsExhausted:          s.aiCreditsExhausted,
+		AICreditsExhaustedAt:        s.aiCreditsExhaustedAt,
+		OllamaUpdateNotifiedVersion: s.ollamaUpdateNotifiedVersion,
+		DesktopPairingCodes:         s.desktopPairingCodes,
+		DesktopPairingAttempts:      s.desktopPairingAttempts,
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -761,6 +765,25 @@ func (s *Store) AICreditsExhausted() (bool, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.aiCreditsExhausted, s.aiCreditsExhaustedAt
+}
+
+// SetOllamaUpdateNotified records that the admin has already been emailed
+// about latestVersion being newer than the installed Ollama. It returns
+// notify=true only the first time a given latestVersion is recorded, so the
+// periodic upstream-release check emails exactly once per newly-seen
+// upstream version rather than on every poll until the operator rebuilds.
+func (s *Store) SetOllamaUpdateNotified(latestVersion string) (notify bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.refreshStateFromDiskLocked(); err != nil {
+		return false, err
+	}
+	latestVersion = strings.TrimSpace(latestVersion)
+	if latestVersion == "" || latestVersion == s.ollamaUpdateNotifiedVersion {
+		return false, nil
+	}
+	s.ollamaUpdateNotifiedVersion = latestVersion
+	return true, s.persistLocked()
 }
 
 func (s *Store) loadDecisions() error {

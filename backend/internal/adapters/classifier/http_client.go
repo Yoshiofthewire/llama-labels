@@ -254,6 +254,40 @@ func (c *HTTPClient) classifyOnce(ctx context.Context, prompt string) (string, e
 	return strings.TrimSpace(out.Response), nil
 }
 
+// Version queries the running Ollama instance's own /api/version endpoint
+// and returns the installed version string (e.g. "0.32.1").
+func (c *HTTPClient) Version(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/version", nil)
+	if err != nil {
+		return "", err
+	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("ollama version check failed: status %d", resp.StatusCode)
+	}
+
+	var out struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(bodyBytes, &out); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(out.Version) == "" {
+		return "", fmt.Errorf("ollama version response missing version field")
+	}
+	return strings.TrimSpace(out.Version), nil
+}
+
 func (c *HTTPClient) ensureWarm(ctx context.Context) error {
 	state := getWarmupState(c.baseURL + c.path + "|" + c.model)
 
