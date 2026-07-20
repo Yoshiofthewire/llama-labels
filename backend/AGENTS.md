@@ -156,7 +156,9 @@ Auth values: `no` (public), `yes` (any signed-in user), `admin` (admin role requ
 | `api.log` / `api.err.log` | supervisord | stdout/stderr of the `api` process |
 | `daemon.log` / `daemon.err.log` | supervisord | stdout/stderr of the `daemon` process |
 | `ollama.log` / `ollama.err.log` | supervisord | Ollama runtime output |
-| `classifier.log` / `classifier.err.log` | classifier adapter | Classify/warmup trace lines |
+| `classifier.log` | classifier adapter | Ollama raw output |
+| `classifier-server.log` | classifier adapter | Classify/warmup trace lines |
+| `classifier.err.log` | classifier adapter | Classifier error lines |
 | `bootstrap.log` / `bootstrap.err.log` | supervisord | Bootstrap script output |
 | `supervisord.log` | supervisord | Process manager events |
 
