@@ -3,6 +3,8 @@ package api
 import (
 	"sync"
 	"time"
+
+	"kypost-server/backend/internal/users"
 )
 
 // loginMaxFailures/loginLockoutFor implement a three-strikes, 15-minute
@@ -117,4 +119,21 @@ func (l *failureLockout) recordSuccess(username string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.entries, username)
+}
+
+var (
+	timingDummyHashOnce sync.Once
+	timingDummyHash     string
+)
+
+// equalizeLoginTiming verifies candidate against a throwaway scrypt hash so
+// the unknown-username (and inactive-account) login path costs the same as a
+// real wrong-password check. The dummy hash is minted once per process; its
+// plaintext is irrelevant because the verification is only ever expected to
+// fail.
+func equalizeLoginTiming(candidate string) {
+	timingDummyHashOnce.Do(func() {
+		timingDummyHash, _ = users.HashPassword("kypost-timing-equalization-dummy")
+	})
+	users.VerifySecretHash(timingDummyHash, candidate)
 }

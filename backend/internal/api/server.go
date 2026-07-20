@@ -3136,7 +3136,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u, err := s.users.GetByUsername(req.Username)
-	if err != nil || !u.Active || !users.VerifyPassword(u, req.Password) {
+	if err != nil || !u.Active {
+		// Pay the same scrypt cost a real password check would, so response
+		// timing doesn't reveal whether the username exists (or is inactive).
+		equalizeLoginTiming(req.Password)
+		s.loginLockout.recordFailure(lockoutKey)
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	if !users.VerifyPassword(u, req.Password) {
 		s.loginLockout.recordFailure(lockoutKey)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
