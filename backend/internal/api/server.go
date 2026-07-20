@@ -95,7 +95,8 @@ type Server struct {
 	nativePushDispatcher *processor.NativePushDispatcher
 	pickupStore          *pgpmail.PickupStore
 	poller               *processor.Poller
-	loginLockout         *loginLockout
+	loginLockout         *failureLockout
+	davLockout           *failureLockout
 	captchaVerifier      captcha.Verifier
 	captchaProvider      captcha.Provider
 	captchaSiteKey       string
@@ -170,6 +171,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		deviceIndex:          map[string]string{},
 		davCredentials:       newDAVCredentialCache(),
 		loginLockout:         newLoginLockout(),
+		davLockout:           newFailureLockout(davMaxFailures, davLockoutFor),
 		captchaVerifier:      captchaVerifier,
 		captchaProvider:      captchaProvider,
 		captchaSiteKey:       captchaSiteKey,
@@ -3103,8 +3105,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Three-strikes/15-minute lockout, keyed by the exact username
 	// submitted regardless of whether it belongs to a real account (so
-	// lockout behavior can't be used to enumerate valid usernames).
-	if allowed, retryAfter := s.loginLockout.allowed(req.Username); !allowed {
+	// lockout behavior can't be used to enumerate valid usernames) plus the
+	// client IP (so an attacker hammering a known username can't lock the
+	// real owner out from their own machine).
+	lockoutKey := req.Username + "\x00" + clientIP(r)
+	if allowed, retryAfter := s.loginLockout.allowed(lockoutKey); !allowed {
 		retrySeconds := int(retryAfter.Seconds()) + 1
 		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
@@ -3132,11 +3137,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	u, err := s.users.GetByUsername(req.Username)
 	if err != nil || !u.Active || !users.VerifyPassword(u, req.Password) {
-		s.loginLockout.recordFailure(req.Username)
+		s.loginLockout.recordFailure(lockoutKey)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
-	s.loginLockout.recordSuccess(req.Username)
+	s.loginLockout.recordSuccess(lockoutKey)
 
 	// Second-factor users must clear a challenge before a session exists. No
 	// cookie is set here; the client receives a challenge id plus the methods it

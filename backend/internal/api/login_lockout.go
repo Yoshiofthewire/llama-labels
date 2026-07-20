@@ -7,13 +7,24 @@ import (
 
 // loginMaxFailures/loginLockoutFor implement a three-strikes, 15-minute
 // cooldown on password login: after loginMaxFailures failed attempts for a
-// given username, further attempts for that exact username are rejected
+// given username+client IP pair, further attempts for that pair are rejected
 // until loginLockoutFor has elapsed. This is independent of whether the
-// username actually exists — see loginLockout.allowed — so it can't be used
-// to distinguish valid from invalid usernames by lockout behavior.
+// username actually exists — see failureLockout.allowed — so it can't be
+// used to distinguish valid from invalid usernames by lockout behavior; and
+// it is scoped to the client IP so failures manufactured by an attacker
+// can't lock the account's real owner out from their own machine.
 const (
 	loginMaxFailures = 3
 	loginLockoutFor  = 15 * time.Minute
+
+	// davMaxFailures/davLockoutFor guard the CardDAV Basic Auth surface,
+	// keyed by client IP (usernames there are fixed account names, and the
+	// password is server-generated — the realistic abuse is one host burning
+	// CPU with scrypt verifications, not a credible guessing campaign). The
+	// threshold is looser than login's because sync clients legitimately
+	// retry a stale password several times before surfacing an error.
+	davMaxFailures = 10
+	davLockoutFor  = 15 * time.Minute
 
 	// loginLockoutSweepThreshold bounds how large loginLockout.entries can
 	// grow before a housekeeping sweep runs. An attacker submitting a stream
@@ -31,21 +42,34 @@ type loginLockoutEntry struct {
 	lockedUntil time.Time
 }
 
-// loginLockout is small in-memory, per-username state guarding
-// handleLogin. It intentionally lives outside Server.sessions/mu — it's
-// unrelated state with its own, much smaller lock scope.
-type loginLockout struct {
-	mu      sync.Mutex
-	entries map[string]*loginLockoutEntry
+// failureLockout is small in-memory, keyed strike/cooldown state: after
+// maxFailures failed attempts for a key, further attempts for that key are
+// rejected until lockoutFor has elapsed. handleLogin keys it by
+// username+client IP; withDAVBasicAuth keys it by client IP alone. It
+// intentionally lives outside Server.sessions/mu — it's unrelated state with
+// its own, much smaller lock scope.
+type failureLockout struct {
+	mu          sync.Mutex
+	maxFailures int
+	lockoutFor  time.Duration
+	entries     map[string]*loginLockoutEntry
 }
 
-func newLoginLockout() *loginLockout {
-	return &loginLockout{entries: map[string]*loginLockoutEntry{}}
+func newFailureLockout(maxFailures int, lockoutFor time.Duration) *failureLockout {
+	return &failureLockout{
+		maxFailures: maxFailures,
+		lockoutFor:  lockoutFor,
+		entries:     map[string]*loginLockoutEntry{},
+	}
+}
+
+func newLoginLockout() *failureLockout {
+	return newFailureLockout(loginMaxFailures, loginLockoutFor)
 }
 
 // allowed reports whether username may attempt a login right now. When
 // false, retryAfter is how much longer the lockout has to run.
-func (l *loginLockout) allowed(username string) (ok bool, retryAfter time.Duration) {
+func (l *failureLockout) allowed(username string) (ok bool, retryAfter time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e, exists := l.entries[username]
@@ -62,7 +86,7 @@ func (l *loginLockout) allowed(username string) (ok bool, retryAfter time.Durati
 // loginLockoutFor once it reaches loginMaxFailures. A lockout that has
 // already expired resets the strike count first, so failures don't
 // accumulate forever across unrelated attempts long after the last lockout.
-func (l *loginLockout) recordFailure(username string) {
+func (l *failureLockout) recordFailure(username string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if len(l.entries) >= loginLockoutSweepThreshold {
@@ -82,14 +106,14 @@ func (l *loginLockout) recordFailure(username string) {
 		e.lockedUntil = time.Time{}
 	}
 	e.failures++
-	if e.failures >= loginMaxFailures {
-		e.lockedUntil = time.Now().Add(loginLockoutFor)
+	if e.failures >= l.maxFailures {
+		e.lockedUntil = time.Now().Add(l.lockoutFor)
 	}
 }
 
 // recordSuccess clears any strike history for username, so a successful
 // login always starts the next set of attempts with a clean slate.
-func (l *loginLockout) recordSuccess(username string) {
+func (l *failureLockout) recordSuccess(username string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.entries, username)
