@@ -13,8 +13,12 @@ COPY frontend .
 RUN npm run build
 
 FROM node:26.3.0-slim
+# liblzma5 and tar are explicitly upgraded (not just pulled from the base
+# image as-is) to pick up any Debian security fixes published after this
+# base image tag was built — apt-get install re-resolves already-installed
+# packages to the latest version available from the configured repos.
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends supervisor tzdata curl ca-certificates zstd \
+	&& apt-get install -y --no-install-recommends supervisor tzdata curl ca-certificates zstd liblzma5 tar \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& useradd -m -s /bin/bash kypost
 
