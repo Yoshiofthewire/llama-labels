@@ -26,7 +26,7 @@ import {
   type IMService
 } from "../api/contacts";
 import { createGroup, deleteGroup, listGroups, renameGroup, type Group } from "../api/groups";
-import { lookupPGPKeyserver } from "../api/pgp";
+import { getPGPIdentity, lookupPGPKeyserver } from "../api/pgp";
 import { usePagination } from "../hooks/usePagination";
 import { useDialogOpen } from "../hooks/useDialogOpen";
 import { PageTabs } from "../components/PageTabs";
@@ -250,6 +250,12 @@ export function ContactsPage() {
   const [saving, setSaving] = useState(false);
 
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  // The account's real PGP identity (Security page), not the self-marked
+  // contact's own pgpKey field — that field is never kept in sync with
+  // whatever identity the account currently has (see handlePGPQRKey, which
+  // deliberately ignores it for the same reason), so it can't be trusted to
+  // show "your" key on your own contact card.
+  const [myPgpKey, setMyPgpKey] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [selectedUids, setSelectedUids] = useState<string[]>([]);
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -320,6 +326,9 @@ export function ContactsPage() {
     void listGroups()
       .then(setGroups)
       .catch(() => {});
+    void getPGPIdentity()
+      .then((identity) => setMyPgpKey(identity.publicKey))
+      .catch(() => setMyPgpKey(""));
   }, []);
 
   useDialogOpen(contactDialogRef, selectedContact);
@@ -631,6 +640,10 @@ export function ContactsPage() {
       selectedUids.includes(uid) ? selectedUids.filter((u) => u !== uid) : [...selectedUids, uid]
     );
   }
+
+  // For your own contact card, show the account's real PGP identity rather
+  // than this contact's own (unsynced) pgpKey field.
+  const selectedContactPgpKey = selectedContact?.isSelf ? myPgpKey : selectedContact?.pgpKey ?? "";
 
   return (
     <section className="panel contacts-page">
@@ -1572,13 +1585,13 @@ export function ContactsPage() {
                 </div>
               ) : null}
 
-              {selectedContact.pgpKey ? (
+              {selectedContactPgpKey ? (
                 <div className="contact-details-section">
                   <h4 className="contact-details-section-title">PGP Public Key</h4>
-                  <PGPKeyInfo armoredKey={selectedContact.pgpKey} />
+                  <PGPKeyInfo armoredKey={selectedContactPgpKey} />
                   <details>
                     <summary className="contacts-muted">Show raw key</summary>
-                    <pre className="contact-details-notes">{selectedContact.pgpKey}</pre>
+                    <pre className="contact-details-notes">{selectedContactPgpKey}</pre>
                   </details>
                 </div>
               ) : null}
@@ -1601,7 +1614,7 @@ export function ContactsPage() {
               !selectedContact.websites?.length &&
               !selectedContact.relations?.length &&
               !selectedContact.groupIDs?.length &&
-              !selectedContact.pgpKey &&
+              !selectedContactPgpKey &&
               ![
                 selectedContact.givenName,
                 selectedContact.familyName,
