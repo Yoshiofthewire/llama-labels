@@ -218,6 +218,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/mfa/push/enabled", s.withAuth(s.handleMFAPushEnabled))
 	mux.HandleFunc("PUT /api/notifications/native/devices/{deviceId}/mfa", s.withAuth(s.handleNativeDeviceMFA))
 	mux.HandleFunc("GET /api/auth/me", s.handleMe)
+	mux.HandleFunc("GET /api/auth/csrf", s.handleCSRFToken)
 	mux.HandleFunc("POST /api/auth/logout", s.withAuth(s.handleLogout))
 	mux.HandleFunc("POST /api/auth/password", s.withAuth(s.handleChangePassword))
 	mux.HandleFunc("/api/status", s.withAuth(s.handleStatus))
@@ -3212,6 +3213,34 @@ func (s *Server) handleCaptchaConfig(w http.ResponseWriter, r *http.Request) {
 		"provider": s.captchaProvider,
 		"siteKey":  s.captchaSiteKey,
 	})
+}
+
+// handleCSRFToken returns the CSRF token paired with the caller's session,
+// for same-origin JS that cannot read the non-HttpOnly csrf_token cookie —
+// specifically the service worker's pushsubscriptionchange handler, which
+// must send X-CSRF-Token on its resubscription POST but has no access to
+// document.cookie. The response carries no CORS headers, so a cross-origin
+// page can trigger this GET but never read the token; possession of the
+// session cookie remains the only way to obtain it, which is exactly the
+// double-submit invariant csrfCheckOK enforces.
+func (s *Server) handleCSRFToken(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.currentUser(r); !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	cookie, err := r.Cookie("kypost_session")
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	s.mu.Lock()
+	sess, ok := s.sessions[cookie.Value]
+	s.mu.Unlock()
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"csrfToken": sess.CSRFToken})
 }
 
 // startSession mints a session token for userID, records it, and sets the

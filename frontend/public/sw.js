@@ -25,10 +25,24 @@ self.addEventListener("pushsubscriptionchange", (event) => {
         applicationServerKey
       });
 
+      // A service worker cannot read document.cookie, so the double-submit
+      // X-CSRF-Token header has to come from this dedicated endpoint instead
+      // of the csrf_token cookie the page JS uses. Without it the POST below
+      // is rejected (403) and push silently dies on subscription rotation.
+      const csrfResponse = await fetch("/api/auth/csrf", { credentials: "include" });
+      if (!csrfResponse.ok) {
+        throw new Error("failed to load csrf token");
+      }
+      const csrfData = await csrfResponse.json();
+      const csrfToken = typeof csrfData.csrfToken === "string" ? csrfData.csrfToken : "";
+      if (!csrfToken) {
+        throw new Error("missing csrf token");
+      }
+
       const response = await fetch("/api/notifications/subscriptions", {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify(subscription.toJSON())
       });
 
