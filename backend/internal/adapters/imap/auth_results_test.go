@@ -1,0 +1,283 @@
+package imap
+
+import (
+	"fmt"
+	"reflect"
+	"testing"
+
+	goimap "github.com/BrianLeishman/go-imap"
+)
+
+// fetchLine builds one raw "* N FETCH (...)" response line carrying an IMAP
+// literal whose declared byte count is computed from the actual content, so
+// the fixture can never drift out of sync with itself.
+func fetchLine(uid int, item, content string) string {
+	return fmt.Sprintf("* 1 FETCH (UID %d %s {%d}\r\n%s)\r\n", uid, item, len(content), content)
+}
+
+const arItem = "BODY[HEADER.FIELDS (AUTHENTICATION-RESULTS)]"
+
+func parseRecords(t *testing.T, raw string) [][]*goimap.Token {
+	t.Helper()
+	d := &goimap.Dialer{}
+	records, err := d.ParseFetchResponse(raw)
+	if err != nil {
+		t.Fatalf("ParseFetchResponse: %v", err)
+	}
+	return records
+}
+
+func TestParseHeaderFieldsRecords(t *testing.T) {
+	t.Run("single UID single Authentication-Results line", func(t *testing.T) {
+		content := "Authentication-Results: mx.example.net; dkim=pass header.d=example.com\r\n\r\n"
+		records := parseRecords(t, fetchLine(100, arItem, content))
+		got, err := parseHeaderFieldsRecords(records, []string{"Authentication-Results"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := map[int][]string{
+			100: {"Authentication-Results: mx.example.net; dkim=pass header.d=example.com"},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("folded value unfolds to one logical line", func(t *testing.T) {
+		content := "Authentication-Results: mx.google.com;\r\n\tdkim=pass header.d=example.com;\r\n\tspf=pass smtp.mailfrom=alice@example.com\r\n\r\n"
+		records := parseRecords(t, fetchLine(200, arItem, content))
+		got, err := parseHeaderFieldsRecords(records, []string{"Authentication-Results"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := "Authentication-Results: mx.google.com; dkim=pass header.d=example.com; spf=pass smtp.mailfrom=alice@example.com"
+		lines := got[200]
+		if len(lines) != 1 {
+			t.Fatalf("expected exactly one unfolded line, got %d: %#v", len(lines), lines)
+		}
+		if lines[0] != want {
+			t.Fatalf("unfolded line mismatch:\n got %q\nwant %q", lines[0], want)
+		}
+	})
+
+	t.Run("two separate occurrences stay separate and in order", func(t *testing.T) {
+		content := "Authentication-Results: hop2.example.net; dkim=pass header.d=a.com\r\nAuthentication-Results: hop1.example.net; spf=pass smtp.mailfrom=b@b.com\r\n\r\n"
+		records := parseRecords(t, fetchLine(300, arItem, content))
+		got, err := parseHeaderFieldsRecords(records, []string{"Authentication-Results"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := []string{
+			"Authentication-Results: hop2.example.net; dkim=pass header.d=a.com",
+			"Authentication-Results: hop1.example.net; spf=pass smtp.mailfrom=b@b.com",
+		}
+		if !reflect.DeepEqual(got[300], want) {
+			t.Fatalf("got %#v, want %#v", got[300], want)
+		}
+	})
+
+	t.Run("NIL value is absent, not an error", func(t *testing.T) {
+		raw := "* 1 FETCH (UID 400 " + arItem + " NIL)\r\n"
+		records := parseRecords(t, raw)
+		got, err := parseHeaderFieldsRecords(records, []string{"Authentication-Results"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := got[400]; ok {
+			t.Fatalf("expected UID 400 absent, got %#v", got)
+		}
+		if len(got) != 0 {
+			t.Fatalf("expected empty map, got %#v", got)
+		}
+	})
+
+	t.Run("empty literal value is absent, not an error", func(t *testing.T) {
+		raw := "* 1 FETCH (UID 450 " + arItem + " {0}\r\n)\r\n"
+		records := parseRecords(t, raw)
+		got, err := parseHeaderFieldsRecords(records, []string{"Authentication-Results"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := got[450]; ok {
+			t.Fatalf("expected UID 450 absent, got %#v", got)
+		}
+	})
+
+	t.Run("multiple UIDs split correctly", func(t *testing.T) {
+		c1 := "Authentication-Results: mx.example.net; dkim=pass header.d=one.com\r\n\r\n"
+		c2 := "Authentication-Results: mx.example.net; spf=pass smtp.mailfrom=two@two.com\r\n\r\n"
+		raw := fetchLine(500, arItem, c1) + fetchLine(501, arItem, c2)
+		records := parseRecords(t, raw)
+		got, err := parseHeaderFieldsRecords(records, []string{"Authentication-Results"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := map[int][]string{
+			500: {"Authentication-Results: mx.example.net; dkim=pass header.d=one.com"},
+			501: {"Authentication-Results: mx.example.net; spf=pass smtp.mailfrom=two@two.com"},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("record with no UID token is a descriptive error", func(t *testing.T) {
+		content := "Authentication-Results: mx.example.net; dkim=pass header.d=example.com\r\n\r\n"
+		raw := fmt.Sprintf("* 1 FETCH (%s {%d}\r\n%s)\r\n", arItem, len(content), content)
+		records := parseRecords(t, raw)
+		_, err := parseHeaderFieldsRecords(records, []string{"Authentication-Results"})
+		if err == nil {
+			t.Fatal("expected an error for a record missing its UID token")
+		}
+	})
+}
+
+func TestAuthenticationResultsPassForDomain(t *testing.T) {
+	const arPrefix = "Authentication-Results: mx.example.net; "
+
+	tests := []struct {
+		name  string
+		lines []string
+		domn  string
+		want  bool
+	}{
+		{
+			name:  "dkim pass exact domain",
+			lines: []string{arPrefix + "dkim=pass header.d=example.com"},
+			domn:  "example.com",
+			want:  true,
+		},
+		{
+			name:  "dkim pass different domain",
+			lines: []string{arPrefix + "dkim=pass header.d=other.com"},
+			domn:  "example.com",
+			want:  false,
+		},
+		{
+			name:  "spf pass via smtp.mailfrom",
+			lines: []string{arPrefix + "spf=pass smtp.mailfrom=alice@example.com"},
+			domn:  "example.com",
+			want:  true,
+		},
+		{
+			name:  "spf pass via smtp.mailfrom no at-sign uses whole value",
+			lines: []string{arPrefix + "spf=pass smtp.mailfrom=example.com"},
+			domn:  "example.com",
+			want:  true,
+		},
+		{
+			name:  "spf pass via smtp.helo exact match",
+			lines: []string{arPrefix + "spf=pass smtp.helo=mail.example.com"},
+			domn:  "mail.example.com",
+			want:  true,
+		},
+		{
+			name:  "spf helo no implicit subdomain match",
+			lines: []string{arPrefix + "spf=pass smtp.helo=mail.example.com"},
+			domn:  "example.com",
+			want:  false,
+		},
+		{
+			name:  "dkim fail",
+			lines: []string{arPrefix + "dkim=fail header.d=example.com"},
+			domn:  "example.com",
+			want:  false,
+		},
+		{
+			name:  "dkim none",
+			lines: []string{arPrefix + "dkim=none header.d=example.com"},
+			domn:  "example.com",
+			want:  false,
+		},
+		{
+			name:  "spf fail",
+			lines: []string{arPrefix + "spf=fail smtp.mailfrom=alice@example.com"},
+			domn:  "example.com",
+			want:  false,
+		},
+		{
+			name:  "spf softfail",
+			lines: []string{arPrefix + "spf=softfail smtp.mailfrom=alice@example.com"},
+			domn:  "example.com",
+			want:  false,
+		},
+		{
+			name:  "spf neutral",
+			lines: []string{arPrefix + "spf=neutral smtp.mailfrom=alice@example.com"},
+			domn:  "example.com",
+			want:  false,
+		},
+		{
+			name:  "case insensitive verdict and domain",
+			lines: []string{"AUTHENTICATION-RESULTS: mx; DKIM=PASS header.d=Example.COM"},
+			domn:  "example.com",
+			want:  true,
+		},
+		{
+			name:  "no subdomain match against sibling domain",
+			lines: []string{arPrefix + "dkim=pass header.d=example.com"},
+			domn:  "evil-example.com",
+			want:  false,
+		},
+		{
+			name:  "domain is not a suffix victim",
+			lines: []string{arPrefix + "dkim=pass header.d=example.com.attacker.net"},
+			domn:  "example.com",
+			want:  false,
+		},
+		{
+			name:  "empty header lines",
+			lines: nil,
+			domn:  "example.com",
+			want:  false,
+		},
+		{
+			name:  "empty domain",
+			lines: []string{arPrefix + "dkim=pass header.d=example.com"},
+			domn:  "",
+			want:  false,
+		},
+		{
+			name:  "topmost line missing Authentication-Results prefix",
+			lines: []string{"Received: from somewhere by mx; dkim=pass header.d=example.com"},
+			domn:  "example.com",
+			want:  false,
+		},
+		{
+			name:  "malformed topmost line does not panic",
+			lines: []string{"Authentication-Results:"},
+			domn:  "example.com",
+			want:  false,
+		},
+		// SECURITY-CRITICAL: only headerLines[0] is ever consulted. The
+		// topmost (trusted, last-stamped) header fails / is for the wrong
+		// domain, while a lower, untrusted, forgeable header WOULD pass. The
+		// result must be false — proving index 0 is the sole trust anchor.
+		{
+			name: "only index 0 consulted - topmost fails, second would pass",
+			lines: []string{
+				arPrefix + "dkim=fail header.d=example.com",
+				arPrefix + "dkim=pass header.d=example.com",
+			},
+			domn: "example.com",
+			want: false,
+		},
+		{
+			name: "only index 0 consulted - topmost wrong domain, second would pass",
+			lines: []string{
+				arPrefix + "dkim=pass header.d=attacker.net",
+				arPrefix + "spf=pass smtp.mailfrom=alice@example.com",
+			},
+			domn: "example.com",
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AuthenticationResultsPassForDomain(tc.lines, tc.domn); got != tc.want {
+				t.Fatalf("AuthenticationResultsPassForDomain(%#v, %q) = %v, want %v", tc.lines, tc.domn, got, tc.want)
+			}
+		})
+	}
+}
