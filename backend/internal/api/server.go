@@ -45,6 +45,7 @@ import (
 	"kypost-server/backend/internal/pgpmail"
 	"kypost-server/backend/internal/processor"
 	"kypost-server/backend/internal/rules"
+	"kypost-server/backend/internal/sendas"
 	"kypost-server/backend/internal/state"
 	"kypost-server/backend/internal/totp"
 	"kypost-server/backend/internal/users"
@@ -100,6 +101,7 @@ type Server struct {
 	davLockout           *failureLockout
 	mfaLockout           *failureLockout
 	mfaPushCooldown      *mfaPushCooldown
+	sendAsCooldown       *sendAsVerificationCooldown
 	captchaVerifier      captcha.Verifier
 	captchaProvider      captcha.Provider
 	captchaSiteKey       string
@@ -122,6 +124,7 @@ type Server struct {
 	userMu         sync.Mutex
 	userStores     map[string]*state.Store
 	userContacts   map[string]*contacts.Store
+	userSendAs     map[string]*sendas.Store
 	userGroups     map[string]*groups.Store
 	userRules      map[string]*rules.Store
 	userMailCache  map[string]*mailcache.Store
@@ -185,6 +188,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		pickupStore:          pgpmail.NewPickupStore(filepath.Join(stateDir, "pickup"), pickupStoreKeyPath),
 		userStores:           map[string]*state.Store{},
 		userContacts:         map[string]*contacts.Store{},
+		userSendAs:           map[string]*sendas.Store{},
 		userGroups:           map[string]*groups.Store{},
 		userRules:            map[string]*rules.Store{},
 		userMailCache:        map[string]*mailcache.Store{},
@@ -196,6 +200,7 @@ func NewServer(cfg config.Config, logger *logging.Logger, healthSvc *health.Serv
 		davLockout:           newFailureLockout(davMaxFailures, davLockoutFor),
 		mfaLockout:           newFailureLockout(mfaMaxFailures, mfaLockoutFor),
 		mfaPushCooldown:      newMfaPushCooldown(),
+		sendAsCooldown:       newSendAsVerificationCooldown(),
 		captchaVerifier:      captchaVerifier,
 		captchaProvider:      captchaProvider,
 		captchaSiteKey:       captchaSiteKey,
@@ -697,6 +702,35 @@ func deriveSMTPHost(imapHost string) string {
 	return host
 }
 
+// resolveSMTPTarget derives the SMTP host/port/address to use for a user's
+// outbound mail from their stored IMAP config, applying the same fallback
+// chain every outbound-send call site in this package needs: the payload's
+// own SMTPHost/SMTPPort, then SMTP_HOST/SMTP_PORT env vars, then a
+// heuristic derived from the IMAP host, then a hardcoded default port of
+// 587. Returns an error (rather than picking a call-site-specific HTTP
+// status) when no host can be determined at all — callers translate that
+// into whatever response is appropriate for their context.
+func resolveSMTPTarget(payload imapConfigPayload) (smtpHost string, smtpPort int, addr string, err error) {
+	smtpHost = strings.TrimSpace(payload.SMTPHost)
+	if smtpHost == "" {
+		smtpHost = strings.TrimSpace(config.EnvOrDefault("SMTP_HOST", ""))
+	}
+	if smtpHost == "" {
+		smtpHost = deriveSMTPHost(payload.Host)
+	}
+	if smtpHost == "" {
+		return "", 0, "", fmt.Errorf("smtp host is not configured")
+	}
+	smtpPort = payload.SMTPPort
+	if smtpPort <= 0 {
+		smtpPort = config.EnvInt("SMTP_PORT", 587)
+	}
+	if smtpPort <= 0 {
+		smtpPort = 587
+	}
+	return smtpHost, smtpPort, fmt.Sprintf("%s:%d", smtpHost, smtpPort), nil
+}
+
 func smtpSendWithTimeout(addr string, auth smtp.Auth, from string, recipients []string, msg []byte, timeout time.Duration) error {
 	result := make(chan error, 1)
 	go func() {
@@ -916,25 +950,11 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	smtpHost := strings.TrimSpace(payload.SMTPHost)
-	if smtpHost == "" {
-		smtpHost = strings.TrimSpace(config.EnvOrDefault("SMTP_HOST", ""))
-	}
-	if smtpHost == "" {
-		smtpHost = deriveSMTPHost(payload.Host)
-	}
-	if smtpHost == "" {
+	smtpHost, smtpPort, addr, err := resolveSMTPTarget(payload)
+	if err != nil {
 		http.Error(w, "smtp host is not configured", http.StatusBadRequest)
 		return
 	}
-	smtpPort := payload.SMTPPort
-	if smtpPort <= 0 {
-		smtpPort = config.EnvInt("SMTP_PORT", 587)
-	}
-	if smtpPort <= 0 {
-		smtpPort = 587
-	}
-	addr := fmt.Sprintf("%s:%d", smtpHost, smtpPort)
 
 	from := sanitizeHeaderValue(payload.Username)
 	if from == "" {

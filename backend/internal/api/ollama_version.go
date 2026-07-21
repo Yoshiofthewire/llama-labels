@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"kypost-server/backend/internal/adapters/classifier"
-	"kypost-server/backend/internal/config"
 	"kypost-server/backend/internal/mailmsg"
 	"kypost-server/backend/internal/ollamaupdate"
 	"kypost-server/backend/internal/users"
@@ -162,24 +160,10 @@ func (s *Server) notifyAdminOllamaUpdateAvailable(installed, latest string) erro
 		return fmt.Errorf("admin has no imap configuration to send through")
 	}
 
-	smtpHost := strings.TrimSpace(payload.SMTPHost)
-	if smtpHost == "" {
-		smtpHost = strings.TrimSpace(config.EnvOrDefault("SMTP_HOST", ""))
+	smtpHost, smtpPort, addr, err := resolveSMTPTarget(payload)
+	if err != nil {
+		return fmt.Errorf("resolve smtp target: %w", err)
 	}
-	if smtpHost == "" {
-		smtpHost = deriveSMTPHost(payload.Host)
-	}
-	if smtpHost == "" {
-		return fmt.Errorf("smtp host is not configured")
-	}
-	smtpPort := payload.SMTPPort
-	if smtpPort <= 0 {
-		smtpPort = config.EnvInt("SMTP_PORT", 587)
-	}
-	if smtpPort <= 0 {
-		smtpPort = 587
-	}
-	addr := fmt.Sprintf("%s:%d", smtpHost, smtpPort)
 
 	from := sanitizeHeaderValue(payload.Username)
 	if from == "" {

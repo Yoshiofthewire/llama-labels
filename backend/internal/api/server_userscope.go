@@ -14,6 +14,7 @@ import (
 	"kypost-server/backend/internal/groups"
 	"kypost-server/backend/internal/mailcache"
 	"kypost-server/backend/internal/rules"
+	"kypost-server/backend/internal/sendas"
 	"kypost-server/backend/internal/state"
 )
 
@@ -109,6 +110,22 @@ func (s *Server) contactsFor(r *http.Request) (*contacts.Store, error) {
 		return nil, errors.New("no auth context on request")
 	}
 	return s.userContactsStore(ac.UserID)
+}
+
+func (s *Server) userSendAsStore(userID string) (*sendas.Store, error) {
+	return getOrCreateUserStore(&s.userMu, s.userSendAs, userID, func() (*sendas.Store, error) {
+		return sendas.New(s.userStateDir(userID))
+	})
+}
+
+// sendAsFor resolves the calling user's send-as alias store from the
+// request's AuthContext (requires the handler to be wrapped in withAuth).
+func (s *Server) sendAsFor(r *http.Request) (*sendas.Store, error) {
+	ac, ok := authFromContext(r)
+	if !ok {
+		return nil, errors.New("no auth context on request")
+	}
+	return s.userSendAsStore(ac.UserID)
 }
 
 func (s *Server) userGroupsStore(userID string) (*groups.Store, error) {
