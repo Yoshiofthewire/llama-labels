@@ -2295,6 +2295,18 @@ pre {
   color: color-mix(in srgb, var(--ink) 62%, var(--ink-strong));
 }
 
+.contacts-status-pending {
+  border-color: color-mix(in srgb, #d9a441 55%, var(--line));
+  background: color-mix(in srgb, #d9a441 16%, transparent);
+  color: color-mix(in srgb, #e8c67a 82%, var(--ink-strong));
+}
+
+.contacts-status-failed {
+  border-color: color-mix(in srgb, #d97878 55%, var(--line));
+  background: color-mix(in srgb, #d97878 16%, transparent);
+  color: color-mix(in srgb, #e8a5a5 82%, var(--ink-strong));
+}
+
 .contacts-col-actions {
   text-align: right;
 }

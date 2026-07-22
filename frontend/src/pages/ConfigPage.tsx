@@ -12,6 +12,7 @@ import {
   type CardDAVClientConfig,
   type DAVPasswordStatus
 } from "../api/contacts";
+import { createSendAsAlias, deleteSendAsAlias, listSendAsAliases, type SendAsAlias } from "../api/sendas";
 import { useAuth } from "../auth";
 import { applyTheme, getStoredTheme, THEME_OPTIONS, type ThemeName } from "../theme";
 
@@ -45,6 +46,39 @@ type IMAPForm = {
 };
 
 const LOG_LEVEL_OPTIONS = ["trace", "debug", "info", "warn", "error", "fatal", "panic"];
+
+function formatWhen(value?: string): string {
+  if (!value) {
+    return "";
+  }
+  const when = new Date(value);
+  if (Number.isNaN(when.getTime())) {
+    return "";
+  }
+  return when.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function sendAsStatusLabel(status: SendAsAlias["status"]): string {
+  switch (status) {
+    case "verified":
+      return "verified";
+    case "failed":
+      return "verification failed";
+    default:
+      return "verifying…";
+  }
+}
+
+function sendAsStatusClass(status: SendAsAlias["status"]): string {
+  switch (status) {
+    case "verified":
+      return "contacts-status-active";
+    case "failed":
+      return "contacts-status-failed";
+    default:
+      return "contacts-status-pending";
+  }
+}
 
 function getTimezoneOptions(): string[] {
   const intlWithSupportedValues = Intl as typeof Intl & {
@@ -116,6 +150,12 @@ export function ConfigPage() {
   const [imapMessage, setImapMessage] = useState("");
   const [imapBusy, setImapBusy] = useState(false);
 
+  const [sendAsAliases, setSendAsAliases] = useState<SendAsAlias[]>([]);
+  const [sendAsEmail, setSendAsEmail] = useState("");
+  const [sendAsDisplayName, setSendAsDisplayName] = useState("");
+  const [sendAsMessage, setSendAsMessage] = useState("");
+  const [sendAsBusy, setSendAsBusy] = useState(false);
+
   const [classifierTestBusy, setClassifierTestBusy] = useState(false);
   const [classifierTestResult, setClassifierTestResult] = useState("");
   const [activeTab, setActiveTab] = useState<"application" | "email" | "carddav" | "labels" | "llm">(isAdmin ? "application" : "email");
@@ -180,6 +220,10 @@ export function ConfigPage() {
     setDavStatus(await getDAVPasswordStatus());
   }
 
+  async function refreshSendAsAliases() {
+    setSendAsAliases(await listSendAsAliases());
+  }
+
   async function refreshCardDAVClientConfig() {
     const status = await getCardDAVClientConfig();
     setClientConfig(status);
@@ -219,7 +263,8 @@ export function ConfigPage() {
         refreshLabels().catch(() => undefined),
         refreshIMAPStatus().catch(() => undefined),
         refreshDavStatus().catch(() => undefined),
-        refreshCardDAVClientConfig().catch(() => undefined)
+        refreshCardDAVClientConfig().catch(() => undefined),
+        refreshSendAsAliases().catch(() => undefined)
       ]);
     };
 
@@ -228,6 +273,21 @@ export function ConfigPage() {
       cancelled = true;
     };
   }, []);
+
+  // While any alias is still verifying, poll for status changes so the list
+  // updates on its own once the background verification check (server-side,
+  // typically completing within a couple of minutes) resolves it — the user
+  // never has to do anything or refresh manually. Stops as soon as nothing
+  // is pending, so this never polls indefinitely for an idle account.
+  useEffect(() => {
+    if (!sendAsAliases.some((alias) => alias.status === "pending")) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      refreshSendAsAliases().catch(() => undefined);
+    }, 15000);
+    return () => window.clearInterval(interval);
+  }, [sendAsAliases]);
 
   if (!cfg) {
     return (
@@ -320,6 +380,43 @@ export function ConfigPage() {
       setImapMessage(`Failed to delete IMAP config: ${message}`);
     } finally {
       setImapBusy(false);
+    }
+  }
+
+  async function addSendAsAlias() {
+    const email = sendAsEmail.trim();
+    if (!email) {
+      setSendAsMessage("Enter an email address first.");
+      return;
+    }
+    setSendAsBusy(true);
+    setSendAsMessage("");
+    try {
+      await createSendAsAlias(email, sendAsDisplayName.trim());
+      setSendAsEmail("");
+      setSendAsDisplayName("");
+      setSendAsMessage("Verification email sent. This address will show as verified automatically once the check completes — no action needed.");
+      await refreshSendAsAliases();
+    } catch (error: unknown) {
+      setSendAsMessage(`Failed to start verification: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setSendAsBusy(false);
+    }
+  }
+
+  async function removeSendAsAlias(alias: SendAsAlias) {
+    if (!window.confirm(`Remove ${alias.email} as a send-as address?`)) {
+      return;
+    }
+    setSendAsBusy(true);
+    setSendAsMessage("");
+    try {
+      await deleteSendAsAlias(alias.id);
+      await refreshSendAsAliases();
+    } catch (error: unknown) {
+      setSendAsMessage(`Failed to remove address: ${toErrorMessage(error, "unknown error")}`);
+    } finally {
+      setSendAsBusy(false);
     }
   }
 
@@ -567,7 +664,8 @@ export function ConfigPage() {
       ) : null}
 
       {activeTab === "email" ? (
-        <div className="config-card" role="tabpanel">
+        <div role="tabpanel">
+        <div className="config-card">
           <h3>Email Settings</h3>
           <p className="config-muted">Stored mail credentials are encrypted at rest. SMTP host/port are optional overrides.</p>
           <div className="config-grid config-grid-two">
@@ -645,6 +743,69 @@ export function ConfigPage() {
           ) : null}
 
           {imapMessage ? <p className="config-muted">{imapMessage}</p> : null}
+        </div>
+
+        <div className="config-card">
+          <h3>Send-As Addresses</h3>
+          <p className="config-muted">
+            Add a secondary email address you also control. KyPost verifies it automatically — it emails the address
+            a one-time code and watches for that same message to come back to this inbox, with no reply or link click
+            needed on your part. Once verified, you can choose it as the From address when composing mail.
+          </p>
+          <div className="config-grid config-grid-two">
+            <label>
+              <div>Email Address</div>
+              <input
+                type="email"
+                value={sendAsEmail}
+                onChange={(event) => setSendAsEmail(event.target.value)}
+                placeholder="you@another-domain.com"
+              />
+            </label>
+            <label>
+              <div>Display Name (optional)</div>
+              <input value={sendAsDisplayName} onChange={(event) => setSendAsDisplayName(event.target.value)} />
+            </label>
+          </div>
+          <div className="config-actions">
+            <button type="button" onClick={() => void addSendAsAlias()} disabled={sendAsBusy}>
+              {sendAsBusy ? "Working..." : "Verify Address"}
+            </button>
+          </div>
+          {sendAsMessage ? <p className="config-muted">{sendAsMessage}</p> : null}
+
+          {sendAsAliases.length > 0 ? (
+            <div className="config-status-card">
+              {sendAsAliases.map((alias) => (
+                <div
+                  key={alias.id}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0" }}
+                >
+                  <span>
+                    {alias.displayName ? `${alias.displayName} <${alias.email}>` : alias.email}
+                    {" — "}
+                    {alias.status === "verified" && alias.verifiedAt
+                      ? `verified ${formatWhen(alias.verifiedAt)}`
+                      : alias.status === "failed"
+                        ? `verification failed${alias.failedAt ? ` ${formatWhen(alias.failedAt)}` : ""}`
+                        : `verifying, expires ${formatWhen(alias.expiresAt)}`}
+                  </span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className={`contacts-badge ${sendAsStatusClass(alias.status)}`}>
+                      <span className="contacts-dot" aria-hidden="true" />
+                      {sendAsStatusLabel(alias.status)}
+                    </span>
+                    <button type="button" onClick={() => void removeSendAsAlias(alias)} disabled={sendAsBusy}>
+                      Remove
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="config-muted">No send-as addresses yet.</p>
+          )}
+        </div>
         </div>
       ) : null}
 
