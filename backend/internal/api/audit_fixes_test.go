@@ -68,14 +68,17 @@ func TestForeignDeviceIDIsAConflict(t *testing.T) {
 		t.Fatalf("create attacker: %v", err)
 	}
 
-	if !srv.deviceIDOwnedByAnother(attacker.ID, victimDeviceID) {
-		t.Fatal("a device id owned by the victim must be a conflict for the attacker")
+	// Test 1: attacker trying to reserve victim's device should fail (conflict).
+	if srv.reserveDeviceID(attacker.ID, victimDeviceID) {
+		t.Fatal("attacker should fail to reserve a device id owned by the victim")
 	}
-	if srv.deviceIDOwnedByAnother(victimID, victimDeviceID) {
-		t.Fatal("the victim re-registering their own device id must NOT be a conflict")
+	// Test 2: victim re-registering their own device should succeed (no conflict).
+	if !srv.reserveDeviceID(victimID, victimDeviceID) {
+		t.Fatal("the victim should succeed to reserve their own device id")
 	}
-	if srv.deviceIDOwnedByAnother(attacker.ID, "brand-new-device-id") {
-		t.Fatal("an unused device id must NOT be a conflict")
+	// Test 3: attacker trying to reserve an unused device should succeed.
+	if !srv.reserveDeviceID(attacker.ID, "brand-new-device-id") {
+		t.Fatal("an unused device id should be reserved successfully")
 	}
 }
 

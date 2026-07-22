@@ -347,22 +347,6 @@ func (s *Server) lookupUserByDevice(deviceID string) (string, bool) {
 	return userID, ok
 }
 
-// deviceIDOwnedByAnother reports whether deviceID is already registered to a
-// user other than ownerID. Native device registration accepts a client-chosen
-// DeviceID; without this check an attacker could register a device using a
-// victim's device id and hijack the global deviceIndex entry, denying the
-// victim's device service (its secret then fails against the attacker's row).
-//
-// Deprecated: this check-then-act pattern is racy when called separately from
-// the write that follows it — two concurrent registrations for the same
-// deviceId from different owners can both pass before either writes. Use
-// reserveDeviceID instead, which performs the check and the reservation
-// atomically.
-func (s *Server) deviceIDOwnedByAnother(ownerID, deviceID string) bool {
-	owner, ok := s.lookupUserByDevice(deviceID)
-	return ok && owner != ownerID
-}
-
 // reserveDeviceID atomically reserves deviceID for ownerID in the shared
 // deviceIndex, refusing if it's already reserved by a different owner. The
 // check and the reservation happen in the same critical section, so two
@@ -377,9 +361,9 @@ func (s *Server) reserveDeviceID(ownerID, deviceID string) bool {
 	if deviceID == "" {
 		return true
 	}
-	// Warm the index from disk on a miss (same as deviceIDOwnedByAnother
-	// did), so a device registered before this process started, or by a
-	// prior request, is still honored by the check below.
+	// Warm the index from disk on a miss, so a device registered before this
+	// process started, or by a prior request, is still honored by the check
+	// below.
 	s.lookupUserByDevice(deviceID)
 
 	s.userMu.Lock()
