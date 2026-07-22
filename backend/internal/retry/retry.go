@@ -7,6 +7,7 @@ package retry
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -14,7 +15,12 @@ import (
 // successful/final (retry=false) or should be retried (retry=true). Loop
 // sleeps backoff(attempt) between attempts (not after the last one),
 // honoring ctx cancellation during the sleep.
+// If attempts <= 0, Loop returns an error without calling fn.
 func Loop[T any](ctx context.Context, attempts int, backoff func(attempt int) time.Duration, fn func(attempt int) (result T, err error, retry bool)) (T, error) {
+	if attempts <= 0 {
+		var zero T
+		return zero, fmt.Errorf("retry.Loop: attempts must be positive, got %d", attempts)
+	}
 	var result T
 	var err error
 	for attempt := 0; attempt < attempts; attempt++ {
