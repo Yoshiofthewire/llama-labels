@@ -52,16 +52,25 @@ func SanitizeHeaderValue(value string) string {
 	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "\r", " "), "\n", " "))
 }
 
+// sanitizeHeaderValues sanitizes each element of a string slice.
+func sanitizeHeaderValues(values []string) []string {
+	result := make([]string, len(values))
+	for i, v := range values {
+		result[i] = SanitizeHeaderValue(v)
+	}
+	return result
+}
+
 // Build renders the complete message bytes.
 func (m Message) Build() []byte {
 	var msg bytes.Buffer
 	msg.WriteString("From: " + SanitizeHeaderValue(m.From) + "\r\n")
-	msg.WriteString("To: " + strings.Join(m.To, ", ") + "\r\n")
+	msg.WriteString("To: " + strings.Join(sanitizeHeaderValues(m.To), ", ") + "\r\n")
 	if len(m.CC) > 0 {
-		msg.WriteString("Cc: " + strings.Join(m.CC, ", ") + "\r\n")
+		msg.WriteString("Cc: " + strings.Join(sanitizeHeaderValues(m.CC), ", ") + "\r\n")
 	}
 	if len(m.BCC) > 0 {
-		msg.WriteString("Bcc: " + strings.Join(m.BCC, ", ") + "\r\n")
+		msg.WriteString("Bcc: " + strings.Join(sanitizeHeaderValues(m.BCC), ", ") + "\r\n")
 	}
 	msg.WriteString("Subject: " + SanitizeHeaderValue(m.Subject) + "\r\n")
 	msg.WriteString("MIME-Version: 1.0\r\n")

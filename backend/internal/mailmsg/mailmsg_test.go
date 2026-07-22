@@ -134,6 +134,51 @@ func TestBuildFallsBackForUnnamedUntypedAttachment(t *testing.T) {
 	}
 }
 
+func TestBuildSanitizesToCCBCCHeaders(t *testing.T) {
+	raw := Message{
+		From:    "sender@example.com",
+		To:      []string{"a@example.com", "b\r\nX-Injected-To: evil@example.com"},
+		CC:      []string{"c\r\nX-Injected-CC: evil@example.com"},
+		BCC:     []string{"d\r\nX-Injected-BCC: evil@example.com"},
+		Subject: "Test",
+		Body:    "The body",
+		Mode:    "plain",
+	}.Build()
+
+	msg, err := mail.ReadMessage(strings.NewReader(string(raw)))
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+
+	// Verify To header injection is prevented (CR/LF flattened to spaces)
+	if got := msg.Header.Get("To"); got != "a@example.com, b  X-Injected-To: evil@example.com" {
+		t.Fatalf("To = %q; header injection must be flattened", got)
+	}
+
+	// Verify injected headers via To/CC/BCC do not appear
+	if got := msg.Header.Get("X-Injected-To"); got != "" {
+		t.Fatalf("X-Injected-To header must not exist, got %q", got)
+	}
+
+	// Verify CC header injection is prevented
+	if got := msg.Header.Get("Cc"); got != "c  X-Injected-CC: evil@example.com" {
+		t.Fatalf("Cc = %q; header injection must be flattened", got)
+	}
+
+	if got := msg.Header.Get("X-Injected-CC"); got != "" {
+		t.Fatalf("X-Injected-CC header must not exist, got %q", got)
+	}
+
+	// Verify BCC header injection is prevented
+	if got := msg.Header.Get("Bcc"); got != "d  X-Injected-BCC: evil@example.com" {
+		t.Fatalf("Bcc = %q; header injection must be flattened", got)
+	}
+
+	if got := msg.Header.Get("X-Injected-BCC"); got != "" {
+		t.Fatalf("X-Injected-BCC header must not exist, got %q", got)
+	}
+}
+
 func decodeBase64Lines(encoded string) ([]byte, error) {
 	clean := strings.NewReplacer("\r", "", "\n", "").Replace(encoded)
 	return base64.StdEncoding.DecodeString(clean)
