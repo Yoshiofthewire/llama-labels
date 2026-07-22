@@ -4,6 +4,7 @@ import Quill from "quill";
 import "quill/dist/quill.snow.css";
 import { deleteJSON, getJSON, postJSON, putJSON, toErrorMessage } from "./api/client";
 import { checkPGPRecipients } from "./api/pgp";
+import { listSendAsAliases, type SendAsAlias } from "./api/sendas";
 import { AuthContext, type AuthState } from "./auth";
 import { ContactPickerModal } from "./components/ContactPickerModal";
 import { RecipientField } from "./components/RecipientField";
@@ -156,6 +157,8 @@ export function App() {
   const [pwaInstalled, setPwaInstalled] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [contactPickerOpen, setContactPickerOpen] = useState(false);
+  const [composeFrom, setComposeFrom] = useState("");
+  const [sendAsOptions, setSendAsOptions] = useState<SendAsAlias[]>([]);
   const [composeTo, setComposeTo] = useState<RecipientFieldState>({ tokens: [], draft: "" });
   const [composeCc, setComposeCc] = useState<RecipientFieldState>({ tokens: [], draft: "" });
   const [composeBcc, setComposeBcc] = useState<RecipientFieldState>({ tokens: [], draft: "" });
@@ -443,6 +446,7 @@ export function App() {
   useDialogOpen(licenseDialogRef, licenseOpen);
 
   function resetComposeForm() {
+    setComposeFrom("");
     setComposeTo({ tokens: [], draft: "" });
     setComposeCc({ tokens: [], draft: "" });
     setComposeBcc({ tokens: [], draft: "" });
@@ -493,14 +497,22 @@ export function App() {
     setComposeAttachments((current) => current.filter((_, i) => i !== index));
   }
 
+  function loadSendAsOptions() {
+    listSendAsAliases()
+      .then((aliases) => setSendAsOptions(aliases.filter((alias) => alias.status === "verified")))
+      .catch(() => setSendAsOptions([]));
+  }
+
   function openComposeWindow() {
     resetComposeForm();
     setComposeError("");
     setComposeSuccess("");
     setComposeOpen(true);
+    loadSendAsOptions();
   }
 
   function openDraftInCompose(payload: DraftComposePayload) {
+    setComposeFrom("");
     setComposeTo(parseRecipientField(payload.sentTo ?? ""));
     setComposeCc(parseRecipientField(payload.cc ?? ""));
     setComposeBcc(parseRecipientField(payload.bcc ?? ""));
@@ -509,6 +521,7 @@ export function App() {
     setComposeError("");
     setComposeSuccess("");
     setComposeOpen(true);
+    loadSendAsOptions();
   }
 
   function trashComposeDraft() {
@@ -584,6 +597,7 @@ export function App() {
     const body = quillInstanceRef.current?.root.innerHTML ?? composeHtmlBody;
     try {
       await postJSON<{ ok: boolean; sentSaved?: boolean; warning?: string }>("/api/mail/send", {
+        from: composeFrom,
         to,
         cc: serializeRecipientField(composeCc),
         bcc: serializeRecipientField(composeBcc),
@@ -1012,6 +1026,23 @@ export function App() {
             {composeNotice ? <p className="notice notice-warning">{composeNotice}</p> : null}
 
             <div className="compose-form-grid">
+              {sendAsOptions.length > 0 ? (
+                <label className="compose-field-row">
+                  <span>FROM:</span>
+                  <select
+                    value={composeFrom}
+                    onChange={(event) => setComposeFrom(event.target.value)}
+                    disabled={composeSending || composeSavingDraft}
+                  >
+                    <option value="">Default (your account address)</option>
+                    {sendAsOptions.map((alias) => (
+                      <option key={alias.id} value={alias.email}>
+                        {alias.displayName ? `${alias.displayName} <${alias.email}>` : alias.email}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <div className="compose-field-row">
                 <span>TO:</span>
                 <RecipientField

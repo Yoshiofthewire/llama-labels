@@ -3057,7 +3057,8 @@ pre {
   color: var(--ink-strong);
 }
 
-.compose-field-row input {
+.compose-field-row input,
+.compose-field-row select {
   background: var(--bg);
   color: var(--ink-strong);
   border: 1px solid var(--line);
