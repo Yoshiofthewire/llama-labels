@@ -54,6 +54,7 @@ export function UsersPage() {
 
   async function submitCreate(e: FormEvent) {
     e.preventDefault();
+    if (createBusy) return;
     if (!newUsername.trim() || !newPassword.trim()) {
       setStatus("Failed: username and a temporary password are required.");
       return;

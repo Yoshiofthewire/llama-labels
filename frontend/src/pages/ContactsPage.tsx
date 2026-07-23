@@ -361,6 +361,7 @@ export function ContactsPage() {
 
   async function submitForm(e: FormEvent) {
     e.preventDefault();
+    if (saving) return;
     if (!form.fn.trim()) {
       setStatus("Failed: full name is required.");
       return;

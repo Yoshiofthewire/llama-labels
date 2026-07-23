@@ -586,6 +586,7 @@ export function App() {
   }, [composeEncrypt, composeTo, composeCc, composeBcc]);
 
   async function sendComposeEmail() {
+    if (composeSending) return;
     const to = serializeRecipientField(composeTo);
     if (!to) {
       setComposeError("TO is required.");
@@ -619,6 +620,7 @@ export function App() {
   }
 
   async function saveComposeDraft() {
+    if (composeSavingDraft) return;
     const to = serializeRecipientField(composeTo);
     if (!to) {
       setComposeError("TO is required.");

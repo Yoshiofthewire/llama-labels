@@ -94,6 +94,7 @@ export function RulesPage() {
   const [runError, setRunError] = useState("");
   const [runResult, setRunResult] = useState<RunRulesResult | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [creatingRule, setCreatingRule] = useState(false);
 
   async function loadRules() {
     setLoading(true);
@@ -119,6 +120,8 @@ export function RulesPage() {
   }, []);
 
   async function handleCreateRule() {
+    if (creatingRule) return;
+    setCreatingRule(true);
     setError("");
     try {
       const created = await createRule(blankRule());
@@ -127,6 +130,8 @@ export function RulesPage() {
       setDraft(created);
     } catch (e) {
       setError(toErrorMessage(e, "failed to create rule"));
+    } finally {
+      setCreatingRule(false);
     }
   }
 
@@ -299,7 +304,7 @@ export function RulesPage() {
         <div className="security-card">
           <div className="security-card-head">
             <h3>Your rules</h3>
-            <button type="button" onClick={handleCreateRule}>
+            <button type="button" onClick={handleCreateRule} disabled={creatingRule}>
               + New rule
             </button>
           </div>
