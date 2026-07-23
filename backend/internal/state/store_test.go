@@ -271,6 +271,201 @@ func TestSetCheckpointDoesNotWipeNativeDevices(t *testing.T) {
 	}
 }
 
+// TestMarkProcessedPreservesConcurrentCheckpointWrite guards against
+// MarkProcessed persisting a stale in-memory checkpoint over one the other
+// process (e.g. the server) just wrote to disk. a is opened before b writes
+// its checkpoint, so a's in-memory checkpoint is stale "" at the time it
+// calls MarkProcessed; MarkProcessed must refresh from disk first so that
+// stale "" is never written back over b's value.
+func TestMarkProcessedPreservesConcurrentCheckpointWrite(t *testing.T) {
+	dir := t.TempDir()
+
+	a, err := New(dir)
+	if err != nil {
+		t.Fatalf("New a: %v", err)
+	}
+	b, err := New(dir)
+	if err != nil {
+		t.Fatalf("New b: %v", err)
+	}
+
+	if err := b.SetCheckpoint("uid-99"); err != nil {
+		t.Fatalf("SetCheckpoint: %v", err)
+	}
+
+	// a's in-memory checkpoint is still stale ("") at this point.
+	if err := a.MarkProcessed("msg-1"); err != nil {
+		t.Fatalf("MarkProcessed: %v", err)
+	}
+
+	reloaded, err := New(dir)
+	if err != nil {
+		t.Fatalf("New reloaded: %v", err)
+	}
+	if got := reloaded.Checkpoint(); got != "uid-99" {
+		t.Fatalf("checkpoint = %q, want %q (MarkProcessed must not stomp a concurrent checkpoint write)", got, "uid-99")
+	}
+}
+
+// TestSetCheckpointPreservesConcurrentAICreditsWrite guards against
+// SetCheckpoint persisting stale in-memory AI-credits state over what another
+// process just wrote to disk.
+func TestSetCheckpointPreservesConcurrentAICreditsWrite(t *testing.T) {
+	dir := t.TempDir()
+
+	a, err := New(dir)
+	if err != nil {
+		t.Fatalf("New a: %v", err)
+	}
+	b, err := New(dir)
+	if err != nil {
+		t.Fatalf("New b: %v", err)
+	}
+
+	if _, err := b.SetAICreditsExhausted("t1"); err != nil {
+		t.Fatalf("SetAICreditsExhausted: %v", err)
+	}
+
+	// a's in-memory aiCreditsExhausted is still stale (false) at this point.
+	if err := a.SetCheckpoint("uid-1"); err != nil {
+		t.Fatalf("SetCheckpoint: %v", err)
+	}
+
+	reloaded, err := New(dir)
+	if err != nil {
+		t.Fatalf("New reloaded: %v", err)
+	}
+	exhausted, at := reloaded.AICreditsExhausted()
+	if !exhausted || at != "t1" {
+		t.Fatalf("aiCreditsExhausted state lost after SetCheckpoint: exhausted=%v at=%q, want true/%q", exhausted, at, "t1")
+	}
+}
+
+// TestCleanupPreservesConcurrentCheckpointWrite guards against Cleanup
+// persisting a stale in-memory checkpoint over one another process just
+// wrote to disk.
+func TestCleanupPreservesConcurrentCheckpointWrite(t *testing.T) {
+	dir := t.TempDir()
+
+	a, err := New(dir)
+	if err != nil {
+		t.Fatalf("New a: %v", err)
+	}
+	b, err := New(dir)
+	if err != nil {
+		t.Fatalf("New b: %v", err)
+	}
+
+	if err := b.SetCheckpoint("uid-cleanup"); err != nil {
+		t.Fatalf("SetCheckpoint: %v", err)
+	}
+
+	// a's in-memory checkpoint is still stale ("") at this point.
+	if err := a.Cleanup(30); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+
+	reloaded, err := New(dir)
+	if err != nil {
+		t.Fatalf("New reloaded: %v", err)
+	}
+	if got := reloaded.Checkpoint(); got != "uid-cleanup" {
+		t.Fatalf("checkpoint = %q, want %q (Cleanup must not stomp a concurrent checkpoint write)", got, "uid-cleanup")
+	}
+}
+
+// TestSetAICreditsExhaustedRefreshesBeforeTransitionCheck guards against the
+// false->true transition-detecting early-return firing off stale in-memory
+// state. b is opened before a marks the flag exhausted, so b's in-memory
+// aiCreditsExhausted is stale (false) when b subsequently calls
+// SetAICreditsExhausted; the refresh must happen before the early-return so b
+// recognizes the flag is already set (no second transition) and does not
+// stomp a's timestamp.
+func TestSetAICreditsExhaustedRefreshesBeforeTransitionCheck(t *testing.T) {
+	dir := t.TempDir()
+
+	a, err := New(dir)
+	if err != nil {
+		t.Fatalf("New a: %v", err)
+	}
+	b, err := New(dir)
+	if err != nil {
+		t.Fatalf("New b: %v", err)
+	}
+
+	transitioned, err := a.SetAICreditsExhausted("t1")
+	if err != nil {
+		t.Fatalf("SetAICreditsExhausted (a): %v", err)
+	}
+	if !transitioned {
+		t.Fatal("expected a's call to be the real false->true transition")
+	}
+
+	// b's in-memory aiCreditsExhausted is still stale (false) at this point.
+	transitioned, err = b.SetAICreditsExhausted("t2")
+	if err != nil {
+		t.Fatalf("SetAICreditsExhausted (b): %v", err)
+	}
+	if transitioned {
+		t.Fatal("expected b to see (via fresh disk read) that the flag is already exhausted, not a new transition")
+	}
+
+	reloaded, err := New(dir)
+	if err != nil {
+		t.Fatalf("New reloaded: %v", err)
+	}
+	exhausted, at := reloaded.AICreditsExhausted()
+	if !exhausted {
+		t.Fatal("expected aiCreditsExhausted to remain true")
+	}
+	if at != "t1" {
+		t.Fatalf("aiCreditsExhaustedAt = %q, want %q (b's stale write must not stomp a's timestamp)", at, "t1")
+	}
+}
+
+// TestClearAICreditsExhaustedRefreshesBeforeTransitionCheck guards against
+// the true->false transition-detecting early-return firing off stale
+// in-memory state. b is opened while the flag is exhausted, so b's in-memory
+// aiCreditsExhausted is stale (true) after a clears it on disk; the refresh
+// must happen before the early-return so b recognizes the flag is already
+// cleared (no second transition/duplicate notification).
+func TestClearAICreditsExhaustedRefreshesBeforeTransitionCheck(t *testing.T) {
+	dir := t.TempDir()
+
+	a, err := New(dir)
+	if err != nil {
+		t.Fatalf("New a: %v", err)
+	}
+
+	if _, err := a.SetAICreditsExhausted("t1"); err != nil {
+		t.Fatalf("SetAICreditsExhausted: %v", err)
+	}
+
+	// b loads while the flag is exhausted on disk.
+	b, err := New(dir)
+	if err != nil {
+		t.Fatalf("New b: %v", err)
+	}
+
+	transitioned, err := a.ClearAICreditsExhausted()
+	if err != nil {
+		t.Fatalf("ClearAICreditsExhausted (a): %v", err)
+	}
+	if !transitioned {
+		t.Fatal("expected a's call to be the real true->false transition")
+	}
+
+	// b's in-memory aiCreditsExhausted is still stale (true) at this point,
+	// even though the flag was already cleared on disk by a.
+	transitioned, err = b.ClearAICreditsExhausted()
+	if err != nil {
+		t.Fatalf("ClearAICreditsExhausted (b): %v", err)
+	}
+	if transitioned {
+		t.Fatal("expected b to see (via fresh disk read) that the flag is already cleared, not a new transition")
+	}
+}
+
 func TestNativeDeviceMFAApproverToggle(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(dir)

@@ -331,6 +331,9 @@ func normalizeDeliveryMode(mode string) string {
 func (s *Store) Cleanup(keepDays int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.refreshStateFromDiskLocked(); err != nil {
+		return err
+	}
 	cutoff := time.Now().Add(-time.Duration(keepDays) * 24 * time.Hour)
 	for id, ts := range s.processedSet {
 		if ts.Before(cutoff) {
@@ -361,6 +364,9 @@ func (s *Store) Seen(id string) bool {
 func (s *Store) MarkProcessed(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.refreshStateFromDiskLocked(); err != nil {
+		return err
+	}
 	s.processedSet[id] = time.Now().UTC()
 	return s.persistLocked()
 }
@@ -368,6 +374,9 @@ func (s *Store) MarkProcessed(id string) error {
 func (s *Store) SetCheckpoint(value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.refreshStateFromDiskLocked(); err != nil {
+		return err
+	}
 	s.checkpoint = value
 	return s.persistLocked()
 }
@@ -735,6 +744,9 @@ func (s *Store) SetNativeDeviceMFAApprover(deviceID string, approver bool) (bool
 func (s *Store) SetAICreditsExhausted(atUTC string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.refreshStateFromDiskLocked(); err != nil {
+		return false, err
+	}
 	if s.aiCreditsExhausted {
 		return false, nil
 	}
@@ -751,6 +763,9 @@ func (s *Store) SetAICreditsExhausted(atUTC string) (bool, error) {
 func (s *Store) ClearAICreditsExhausted() (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.refreshStateFromDiskLocked(); err != nil {
+		return false, err
+	}
 	if !s.aiCreditsExhausted {
 		return false, nil
 	}
