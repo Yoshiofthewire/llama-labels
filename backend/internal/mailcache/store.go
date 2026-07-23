@@ -181,6 +181,7 @@ func (s *Store) Sync(mailboxKey string, limit int, live []Overview, since int64)
 			e.PGPSigned = prev.PGPSigned
 			e.PGPVerified = prev.PGPVerified
 			e.PGPSignerFingerprint = prev.PGPSignerFingerprint
+			e.PGPProtectedSubject = prev.PGPProtectedSubject
 			next = append(next, e)
 		default:
 			next = append(next, prev)
@@ -281,6 +282,7 @@ func (s *Store) Upsert(mailboxKey string, entries []Entry) error {
 			updated.PGPSigned = in.PGPSigned
 			updated.PGPVerified = in.PGPVerified
 			updated.PGPSignerFingerprint = in.PGPSignerFingerprint
+			updated.PGPProtectedSubject = in.PGPProtectedSubject
 		}
 		// Only the warm path (poller) calls Upsert, and it always carries an
 		// authoritative attachment flag from the same GetEmails parse — so

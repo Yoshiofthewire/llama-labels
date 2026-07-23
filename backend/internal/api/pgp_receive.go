@@ -50,6 +50,9 @@ func (s *Server) decryptPGPMessageContent(userID string, c imapadapter.MessageCo
 	c.PGPSigned = result.Signed
 	c.PGPVerified = result.Verified
 	c.PGPSignerFingerprint = result.SignerFingerprint
+	if subject, ok := pgpmail.ExtractProtectedSubject(result.Content); ok {
+		c.PGPProtectedSubject = subject
+	}
 	c.PGPEncryptedPayload = ""
 	return c
 }
@@ -95,6 +98,9 @@ func (s *Server) decryptPGPUnreadMessage(userID string, msg imapadapter.UnreadMe
 	msg.PGPSigned = result.Signed
 	msg.PGPVerified = result.Verified
 	msg.PGPSignerFingerprint = result.SignerFingerprint
+	if subject, ok := pgpmail.ExtractProtectedSubject(result.Content); ok {
+		msg.PGPProtectedSubject = subject
+	}
 	msg.PGPEncryptedPayload = ""
 	return msg
 }

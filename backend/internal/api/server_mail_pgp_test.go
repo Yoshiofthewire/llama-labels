@@ -365,6 +365,17 @@ func TestBuildPGPDeliveriesIsolatesBCCRecipients(t *testing.T) {
 	if _, err := pgpmail.DecryptMIME(eveArmored, dave, nil); err == nil {
 		t.Fatal("dave must not be able to decrypt eve's bcc ciphertext")
 	}
+
+	// The real subject must never travel in cleartext on any delivery's wire
+	// bytes; the outer envelope carries only the placeholder.
+	for i, d := range deliveries {
+		if bytes.Contains(d.Ciphertext, []byte("Secret")) {
+			t.Fatalf("delivery %d leaked the real subject in cleartext", i)
+		}
+		if !bytes.Contains(d.Ciphertext, []byte("Subject: "+pgpmail.OuterPlaceholderSubject)) {
+			t.Fatalf("delivery %d missing the placeholder Subject on the outer envelope", i)
+		}
+	}
 }
 
 func TestBuildPGPDeliveriesBCCOnlyWhenNoToCCHasUsableKey(t *testing.T) {

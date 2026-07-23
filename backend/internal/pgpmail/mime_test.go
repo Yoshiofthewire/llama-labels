@@ -2,6 +2,7 @@ package pgpmail
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"io"
 	"mime"
@@ -75,8 +76,13 @@ func TestEncryptDecryptMIMERoundTrip(t *testing.T) {
 	if !strings.Contains(string(encrypted), "multipart/encrypted") {
 		t.Fatal("expected multipart/encrypted content type in output")
 	}
-	if !strings.Contains(string(encrypted), "Subject: Secret") {
-		t.Fatal("expected Subject header preserved on the outer envelope")
+	// The real subject must NOT appear in cleartext anywhere on the wire; the
+	// outer Subject is replaced with the fixed placeholder.
+	if strings.Contains(string(encrypted), "Secret") {
+		t.Fatal("real subject leaked into the encrypted message bytes")
+	}
+	if !strings.Contains(string(encrypted), "Subject: "+OuterPlaceholderSubject) {
+		t.Fatal("expected the placeholder Subject on the outer envelope")
 	}
 
 	armoredData, ok := extractOctetStreamPart(t, encrypted)
@@ -94,6 +100,12 @@ func TestEncryptDecryptMIMERoundTrip(t *testing.T) {
 	if result.SignerFingerprint != alice.Fingerprint {
 		t.Fatalf("signer fingerprint mismatch: got %s want %s", result.SignerFingerprint, alice.Fingerprint)
 	}
+	// The real subject is recovered from the decrypted payload's protected
+	// headers.
+	subject, ok := ExtractProtectedSubject(result.Content)
+	if !ok || subject != "Secret" {
+		t.Fatalf("ExtractProtectedSubject: got (%q, %v), want (\"Secret\", true)", subject, ok)
+	}
 	body, attachments, err := ParseContent(result.Content)
 	if err != nil {
 		t.Fatalf("ParseContent: %v", err)
@@ -101,6 +113,8 @@ func TestEncryptDecryptMIMERoundTrip(t *testing.T) {
 	if body != "meet at dawn" {
 		t.Fatalf("body mismatch: got %q", body)
 	}
+	// The protected-headers wrapper and its legacy-display part must be
+	// transparent to ParseContent — no phantom attachment.
 	if len(attachments) != 0 {
 		t.Fatalf("expected no attachments, got %d", len(attachments))
 	}
@@ -522,4 +536,169 @@ func TestParseContentMultipartAcceptsWithinCap(t *testing.T) {
 	if len(attachments) != 1 || string(attachments[0].Content) != "attached data" {
 		t.Fatalf("unexpected attachments: %+v", attachments)
 	}
+}
+
+// TestExtractProtectedSubjectThunderbirdStyle proves interop with the
+// protected-headers convention as emitted by Thunderbird/Mutt/K-9: the inner
+// Subject sits directly on a single-part content (no multipart wrapper, no
+// legacy-display part) and is RFC 2047 encoded-word. ExtractProtectedSubject
+// must decode it.
+func TestExtractProtectedSubjectThunderbirdStyle(t *testing.T) {
+	content := []byte("Subject: =?UTF-8?B?" +
+		base64UTF8("Café meeting") +
+		"?=\r\n" +
+		"Content-Type: text/plain; charset=UTF-8; protected-headers=\"v1\"\r\n" +
+		"\r\n" +
+		"body text\r\n")
+
+	subject, ok := ExtractProtectedSubject(content)
+	if !ok || subject != "Café meeting" {
+		t.Fatalf("ExtractProtectedSubject: got (%q, %v), want (\"Café meeting\", true)", subject, ok)
+	}
+
+	// And it still renders as a plain body, not swallowed.
+	body, attachments, err := ParseContent(content)
+	if err != nil {
+		t.Fatalf("ParseContent: %v", err)
+	}
+	if strings.TrimSpace(body) != "body text" {
+		t.Fatalf("body mismatch: got %q", body)
+	}
+	if len(attachments) != 0 {
+		t.Fatalf("expected no attachments, got %d", len(attachments))
+	}
+}
+
+// TestExtractProtectedSubjectAbsent proves the fallback signal: content with
+// no Subject header returns ok=false, so callers keep the outer envelope
+// subject.
+func TestExtractProtectedSubjectAbsent(t *testing.T) {
+	content := []byte("Content-Type: text/plain\r\n\r\nno subject here")
+	if subject, ok := ExtractProtectedSubject(content); ok {
+		t.Fatalf("expected ok=false for content without a Subject header, got %q", subject)
+	}
+}
+
+// TestParseContentNestedMultipartAlternative proves the recursive walk: a
+// nested multipart/alternative (the shape Thunderbird produces for HTML mail)
+// yields a display body rather than being mis-collected as an opaque
+// attachment.
+func TestParseContentNestedMultipartAlternative(t *testing.T) {
+	var inner bytes.Buffer
+	iw := multipart.NewWriter(&inner)
+	textPart, _ := iw.CreatePart(textproto.MIMEHeader{"Content-Type": {"text/plain"}})
+	_, _ = textPart.Write([]byte("plain body"))
+	htmlPart, _ := iw.CreatePart(textproto.MIMEHeader{"Content-Type": {"text/html"}})
+	_, _ = htmlPart.Write([]byte("<p>html body</p>"))
+	_ = iw.Close()
+
+	var outer bytes.Buffer
+	ow := multipart.NewWriter(&outer)
+	altPart, _ := ow.CreatePart(textproto.MIMEHeader{
+		"Content-Type": {`multipart/alternative; boundary="` + iw.Boundary() + `"`},
+	})
+	_, _ = altPart.Write(inner.Bytes())
+	_ = ow.Close()
+
+	var content bytes.Buffer
+	content.WriteString(`Content-Type: multipart/mixed; boundary=` + ow.Boundary() + "\r\n\r\n")
+	content.Write(outer.Bytes())
+
+	body, attachments, err := ParseContent(content.Bytes())
+	if err != nil {
+		t.Fatalf("ParseContent: %v", err)
+	}
+	if body != "plain body" {
+		t.Fatalf("expected first text part as body, got %q", body)
+	}
+	if len(attachments) != 0 {
+		t.Fatalf("expected nested multipart to render, not become attachments, got %d", len(attachments))
+	}
+}
+
+// TestEncryptMIMESanitizesProtectedSubject proves a subject carrying CR/LF
+// can't inject headers into the protected wrapper: the injected line never
+// appears as its own header.
+func TestEncryptMIMESanitizesProtectedSubject(t *testing.T) {
+	alice, err := GenerateIdentity("Alice", "alice@example.com")
+	if err != nil {
+		t.Fatalf("GenerateIdentity alice: %v", err)
+	}
+	plaintext := mailmsg.Message{
+		From:    "alice@example.com",
+		To:      []string{"alice@example.com"},
+		Subject: "safe\r\nBcc: evil@example.com",
+		Body:    "hi",
+		Mode:    "plain",
+	}.Build()
+
+	encrypted, err := EncryptMIME(plaintext, []string{alice.ArmoredPublicKey}, nil)
+	if err != nil {
+		t.Fatalf("EncryptMIME: %v", err)
+	}
+	armoredData, ok := extractOctetStreamPart(t, encrypted)
+	if !ok {
+		t.Fatal("expected an application/octet-stream data part")
+	}
+	result, err := DecryptMIME(armoredData, alice, nil)
+	if err != nil {
+		t.Fatalf("DecryptMIME: %v", err)
+	}
+	if bytes.Contains(result.Content, []byte("\r\nBcc:")) {
+		t.Fatalf("subject injection: an injected Bcc header appeared in the protected content:\n%s", result.Content)
+	}
+	// CR and LF are each flattened to a space, so "safe\r\nBcc:..." becomes
+	// "safe  Bcc:..." on one line — no injected header.
+	subject, ok := ExtractProtectedSubject(result.Content)
+	if !ok || subject != "safe  Bcc: evil@example.com" {
+		t.Fatalf("ExtractProtectedSubject: got (%q, %v), want flattened single line", subject, ok)
+	}
+}
+
+// TestEncryptMIMENoSubject proves an empty subject still gets the outer
+// placeholder path only when there's a subject: with no subject, the message
+// is encrypted without a protected-headers wrapper and no placeholder is
+// forced.
+func TestEncryptMIMENoSubject(t *testing.T) {
+	alice, err := GenerateIdentity("Alice", "alice@example.com")
+	if err != nil {
+		t.Fatalf("GenerateIdentity alice: %v", err)
+	}
+	plaintext := mailmsg.Message{
+		From: "alice@example.com",
+		To:   []string{"alice@example.com"},
+		Body: "hi",
+		Mode: "plain",
+	}.Build()
+
+	encrypted, err := EncryptMIME(plaintext, []string{alice.ArmoredPublicKey}, nil)
+	if err != nil {
+		t.Fatalf("EncryptMIME: %v", err)
+	}
+	if strings.Contains(string(encrypted), OuterPlaceholderSubject) {
+		t.Fatal("did not expect a placeholder Subject when the message had no subject")
+	}
+	armoredData, ok := extractOctetStreamPart(t, encrypted)
+	if !ok {
+		t.Fatal("expected an application/octet-stream data part")
+	}
+	result, err := DecryptMIME(armoredData, alice, nil)
+	if err != nil {
+		t.Fatalf("DecryptMIME: %v", err)
+	}
+	if subject, ok := ExtractProtectedSubject(result.Content); ok {
+		t.Fatalf("expected no protected subject for a subjectless message, got %q", subject)
+	}
+	body, _, err := ParseContent(result.Content)
+	if err != nil {
+		t.Fatalf("ParseContent: %v", err)
+	}
+	if strings.TrimSpace(body) != "hi" {
+		t.Fatalf("body mismatch: got %q", body)
+	}
+}
+
+// base64UTF8 is a tiny test helper for building an RFC 2047 B-encoded word.
+func base64UTF8(s string) string {
+	return base64.StdEncoding.EncodeToString([]byte(s))
 }

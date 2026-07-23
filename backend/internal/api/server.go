@@ -2478,7 +2478,19 @@ func mailCacheEntryFromUnreadMessage(msg imapadapter.UnreadMessage, status strin
 		PGPSigned:            msg.PGPSigned,
 		PGPVerified:          msg.PGPVerified,
 		PGPSignerFingerprint: msg.PGPSignerFingerprint,
+		PGPProtectedSubject:  msg.PGPProtectedSubject,
 	}
+}
+
+// inboxSubject returns the subject to display for a message: the real subject
+// recovered from an encrypted message's protected headers when present,
+// otherwise the plaintext envelope/overview subject (which for an encrypted
+// message is pgpmail.OuterPlaceholderSubject).
+func inboxSubject(envelopeSubject, protectedSubject string) string {
+	if protectedSubject != "" {
+		return protectedSubject
+	}
+	return envelopeSubject
 }
 
 // inboxUncategorizedTab is the fallback tab for messages matching none of
@@ -2594,7 +2606,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 					SentTo:               e.SentTo,
 					CC:                   e.CC,
 					BCC:                  e.BCC,
-					Subject:              e.Subject,
+					Subject:              inboxSubject(e.Subject, e.PGPProtectedSubject),
 					Body:                 e.Body,
 					Status:               e.Status,
 					AtUTC:                e.AtUTC,
@@ -2640,7 +2652,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 				SentTo:               msg.SentTo,
 				CC:                   msg.CC,
 				BCC:                  msg.BCC,
-				Subject:              msg.Subject,
+				Subject:              inboxSubject(msg.Subject, msg.PGPProtectedSubject),
 				Body:                 msg.Body,
 				Status:               status,
 				AtUTC:                msg.AtUTC,
@@ -2716,6 +2728,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 				e.PGPSigned = c.PGPSigned
 				e.PGPVerified = c.PGPVerified
 				e.PGPSignerFingerprint = c.PGPSignerFingerprint
+				e.PGPProtectedSubject = c.PGPProtectedSubject
 				result.New[i] = e
 				warmEntries = append(warmEntries, e)
 			}
@@ -2732,6 +2745,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 		hasAttachments := e.HasAttachments
 		pgpEncrypted, pgpSigned, pgpVerified := e.PGPEncrypted, e.PGPSigned, e.PGPVerified
 		pgpSignerFingerprint := e.PGPSignerFingerprint
+		pgpProtectedSubject := e.PGPProtectedSubject
 		var pgpDecryptError string
 		if body == "" {
 			if c, ok := contents[e.UID]; ok {
@@ -2741,6 +2755,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 				pgpSigned = c.PGPSigned
 				pgpVerified = c.PGPVerified
 				pgpSignerFingerprint = c.PGPSignerFingerprint
+				pgpProtectedSubject = c.PGPProtectedSubject
 				pgpDecryptError = c.PGPDecryptError
 			}
 		}
@@ -2750,7 +2765,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 			SentTo:               e.SentTo,
 			CC:                   e.CC,
 			BCC:                  e.BCC,
-			Subject:              e.Subject,
+			Subject:              inboxSubject(e.Subject, pgpProtectedSubject),
 			Body:                 body,
 			Status:               e.Status,
 			AtUTC:                e.AtUTC,
@@ -2770,7 +2785,7 @@ func (s *Server) serveInbox(w http.ResponseWriter, ctx context.Context, userID s
 			SentTo:               e.SentTo,
 			CC:                   e.CC,
 			BCC:                  e.BCC,
-			Subject:              e.Subject,
+			Subject:              inboxSubject(e.Subject, e.PGPProtectedSubject),
 			Status:               e.Status,
 			AtUTC:                e.AtUTC,
 			HasAttachments:       e.HasAttachments,

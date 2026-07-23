@@ -216,6 +216,49 @@ func TestUpsert_BodyAttachedWithoutBumpingRev(t *testing.T) {
 	}
 }
 
+// TestPGPProtectedSubject_WarmedWithoutChurnAndPreserved proves the warm-only
+// protected subject: a decrypt-warm Upsert attaches it without bumping Rev
+// (Subject stays the placeholder overview subject, so entryMeta is unchanged),
+// and a later metadata-only overview change preserves it rather than resetting
+// it from the placeholder-carrying overview.
+func TestPGPProtectedSubject_WarmedWithoutChurnAndPreserved(t *testing.T) {
+	s := newTestStore(t)
+	// The overview subject is the placeholder for an encrypted message.
+	first, _ := s.Sync("INBOX", 10, []Overview{ov(1, "[Encrypted] Email Sent by KyPost", "unread")}, 0)
+	revBefore := first.New[0].Rev
+
+	warm := entry(1, "[Encrypted] Email Sent by KyPost", "unread", "decrypted-body")
+	warm.PGPEncrypted = true
+	warm.PGPProtectedSubject = "Quarterly numbers"
+	if err := s.Upsert("INBOX", []Entry{warm}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	entries, _ := s.Snapshot("INBOX", 1)
+	if entries[0].PGPProtectedSubject != "Quarterly numbers" {
+		t.Fatalf("expected protected subject warmed in, got %+v", entries[0])
+	}
+	if entries[0].Subject != "[Encrypted] Email Sent by KyPost" {
+		t.Fatalf("Subject must stay the placeholder overview subject, got %q", entries[0].Subject)
+	}
+	if entries[0].Rev != revBefore {
+		t.Fatalf("warming a protected subject must not bump Rev: before=%d after=%d", revBefore, entries[0].Rev)
+	}
+
+	// A read-flag flip via overview (still the placeholder subject) must keep
+	// the warmed protected subject.
+	second, err := s.Sync("INBOX", 10, []Overview{ov(1, "[Encrypted] Email Sent by KyPost", "read")}, first.Cursor)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(second.Updated) != 1 {
+		t.Fatalf("expected the read-flag change reported as an update, got %+v", second)
+	}
+	entries, _ = s.Snapshot("INBOX", 1)
+	if entries[0].PGPProtectedSubject != "Quarterly numbers" {
+		t.Fatalf("metadata-only overview change must preserve the protected subject, got %+v", entries[0])
+	}
+}
+
 func TestHasAttachments_WarmPathSetsIt_OverviewLeavesUnset(t *testing.T) {
 	s := newTestStore(t)
 

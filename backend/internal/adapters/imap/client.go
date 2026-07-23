@@ -86,6 +86,11 @@ type UnreadMessage struct {
 	PGPVerified          bool
 	PGPSignerFingerprint string
 	PGPDecryptError      string
+	// PGPProtectedSubject holds the real subject recovered from the encrypted
+	// payload's protected headers, when present. Populated by internal/api
+	// after decryption; zero-valued here. Kept separate from the envelope
+	// subject so the mail cache's overview-subject diffing isn't disturbed.
+	PGPProtectedSubject string
 }
 
 // MessageContent is the per-UID result of GetMessageBodies: the rendered body
@@ -126,6 +131,11 @@ type MessageContent struct {
 	PGPVerified          bool
 	PGPSignerFingerprint string
 	PGPDecryptError      string
+	// PGPProtectedSubject holds the real subject recovered from the encrypted
+	// payload's protected headers, when present. Populated by internal/api
+	// after decryption; zero-valued here. Kept separate from the envelope
+	// subject so the mail cache's overview-subject diffing isn't disturbed.
+	PGPProtectedSubject string
 }
 
 // pgpDetectPayload scans attachments for an armored OpenPGP message — the

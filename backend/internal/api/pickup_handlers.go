@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"kypost-server/backend/internal/mailmsg"
+	"kypost-server/backend/internal/pgpmail"
 )
 
 // pickupLinkTTL is how long a pickup link stays valid if never viewed —
@@ -70,9 +71,13 @@ func (s *Server) sendPickupNotification(userID, from, recipient, subject, plainB
 
 	link := fmt.Sprintf("%s/pickup/%s?t=%s", s.pickupBaseURL(), id, token)
 	notice := mailmsg.Message{
-		From:    from,
-		To:      []string{recipient},
-		Subject: "Encrypted message waiting for you: " + subject,
+		From: from,
+		To:   []string{recipient},
+		// Placeholder rather than the real subject: the notification travels
+		// in cleartext to a keyless recipient, so leaking the subject here
+		// would defeat subject protection. The real subject is shown on the
+		// authenticated pickup page (PickupStore.View).
+		Subject: pgpmail.OuterPlaceholderSubject,
 		Body: "You've received a message that was sent encrypted. " +
 			"Since we don't have a PGP key on file for your address, " +
 			"you can read it once, securely, at the link below:\n\n" + link +

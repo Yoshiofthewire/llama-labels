@@ -71,6 +71,14 @@ type Entry struct {
 	PGPSigned            bool   `json:"pgpSigned,omitempty"`
 	PGPVerified          bool   `json:"pgpVerified,omitempty"`
 	PGPSignerFingerprint string `json:"pgpSignerFingerprint,omitempty"`
+
+	// PGPProtectedSubject is the real subject recovered from a decrypted
+	// message's protected headers, warm-path-only like the other PGP fields.
+	// Deliberately NOT part of entryMeta: Subject stays the plaintext
+	// envelope/overview subject so Sync's overview diffing doesn't churn Rev
+	// on every poll; internal/api substitutes this value into the response
+	// subject instead.
+	PGPProtectedSubject string `json:"pgpProtectedSubject,omitempty"`
 }
 
 // Overview is the caller-supplied live snapshot for one message, sourced

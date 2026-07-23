@@ -62,12 +62,96 @@ func writeEnvelopeHeaders(w io.Writer, envelope textproto.MIMEHeader) {
 	}
 }
 
+// OuterPlaceholderSubject replaces the real Subject on the unencrypted outer
+// envelope of a PGP/MIME-encrypted message. The real subject is instead
+// carried inside the encrypted payload via protected headers (protectContent)
+// and restored on the receiving side (ExtractProtectedSubject). Also reused
+// for the outer subject of pickup notifications so the real subject never
+// travels in cleartext.
+const OuterPlaceholderSubject = "[Encrypted] Email Sent by KyPost"
+
+// protectContent wraps an inner MIME content part (a Content-Type header line
+// plus body, as produced by splitMessage) in a Protected Headers v1 structure
+// — the "memoryhole" convention of draft-ietf-lamps-header-protection emitted
+// and consumed by Thunderbird, Mutt and K-9. The real subject is copied onto
+// the wrapper's own headers (protected-headers="v1") so an aware client shows
+// it, and, when non-empty, into a leading text/rfc822-headers "legacy display"
+// part so any other client (gpg CLI, older MUAs) still renders it human-
+// readably. The original content is nested byte-verbatim as the final part.
+//
+// Scope is deliberately Subject-only (LAMPS baseline); no other headers are
+// protected — see the plan. Hand-assembled rather than via a
+// mime/multipart.Writer for the same reason as buildSignedEnvelope: CreatePart
+// injects its own header separator and would corrupt the byte-verbatim nested
+// content.
+func protectContent(content []byte, subject string) []byte {
+	subject = mailmsg.SanitizeHeaderValue(subject)
+	boundary := randomBoundary()
+
+	var msg bytes.Buffer
+	if subject != "" {
+		msg.WriteString("Subject: " + subject + "\r\n")
+	}
+	msg.WriteString(`Content-Type: multipart/mixed; boundary="` + boundary + `"; protected-headers="v1"` + "\r\n")
+	msg.WriteString("\r\n")
+
+	if subject != "" {
+		msg.WriteString("--" + boundary + "\r\n")
+		msg.WriteString("Content-Type: text/rfc822-headers; protected-headers=\"v1\"\r\n")
+		msg.WriteString("Content-Disposition: inline\r\n")
+		msg.WriteString("\r\n")
+		msg.WriteString("Subject: " + subject + "\r\n")
+		msg.WriteString("\r\n")
+	}
+
+	// Per RFC 2046 the CRLF before a boundary delimiter belongs to the
+	// delimiter; write it unconditionally after the (possibly multipart)
+	// content, mirroring buildSignedEnvelope.
+	msg.WriteString("--" + boundary + "\r\n")
+	msg.Write(content)
+	msg.WriteString("\r\n")
+	msg.WriteString("--" + boundary + "--\r\n")
+	return msg.Bytes()
+}
+
+// ExtractProtectedSubject reads a protected Subject header from a decrypted
+// PGP/MIME content part (the bytes returned by DecryptMIME). It accepts both
+// KyPost's own protectContent output and Thunderbird/Mutt/K-9 protected-
+// headers mail, RFC 2047-decoding an encoded-word subject. The inner Subject
+// is sender-authored encrypted data — the same trust level as the body — so it
+// is accepted regardless of the protected-headers parameter. ok is false when
+// no Subject header is present or it decodes to empty, in which case callers
+// fall back to the outer envelope subject.
+func ExtractProtectedSubject(content []byte) (subject string, ok bool) {
+	reader := textproto.NewReader(bufio.NewReader(bytes.NewReader(content)))
+	header, err := reader.ReadMIMEHeader()
+	if err != nil && header == nil {
+		return "", false
+	}
+	raw := header.Get("Subject")
+	if raw == "" {
+		return "", false
+	}
+	decoded, err := (&mime.WordDecoder{}).DecodeHeader(raw)
+	if err != nil {
+		decoded = raw
+	}
+	decoded = mailmsg.SanitizeHeaderValue(decoded)
+	if decoded == "" {
+		return "", false
+	}
+	return decoded, true
+}
+
 // EncryptMIME wraps a plaintext RFC 5322 message (as produced by
 // mailmsg.Message.Build()) in an RFC 3156 multipart/encrypted envelope. The
 // message's Content-Type and body become the encrypted payload; From/To/Cc/
-// Bcc/Subject stay on the outer, unencrypted envelope headers. If signer is
-// non-nil, the content is signed before encryption (combined sign+encrypt,
-// verified in one step by DecryptMIME on the way back).
+// Bcc stay on the outer, unencrypted envelope headers. When the message has a
+// Subject, it is moved into the encrypted payload via protected headers and
+// the outer Subject is replaced with OuterPlaceholderSubject, so the real
+// subject never travels in cleartext. If signer is non-nil, the content is
+// signed before encryption (combined sign+encrypt, verified in one step by
+// DecryptMIME on the way back).
 func EncryptMIME(plaintext []byte, recipientArmoredPubKeys []string, signer *Identity) ([]byte, error) {
 	if len(recipientArmoredPubKeys) == 0 {
 		return nil, errors.New("pgpmail: at least one recipient key required")
@@ -75,6 +159,10 @@ func EncryptMIME(plaintext []byte, recipientArmoredPubKeys []string, signer *Ide
 	envelope, content, err := splitMessage(plaintext)
 	if err != nil {
 		return nil, err
+	}
+	if realSubject := envelope.Get("Subject"); realSubject != "" {
+		envelope.Set("Subject", OuterPlaceholderSubject)
+		content = protectContent(content, realSubject)
 	}
 
 	recipients, err := crypto.NewKeyRing(nil)
@@ -337,13 +425,21 @@ func VerifyDetached(data []byte, armoredSignature string, signerArmoredPubKeys [
 	return out, nil
 }
 
+// maxContentDepth bounds recursion into nested multipart structures so a
+// maliciously deep message can't exhaust the stack. Legitimate mail (including
+// KyPost's own protected-headers wrapper around a multipart/mixed with
+// attachments) nests only a couple of levels.
+const maxContentDepth = 8
+
 // ParseContent decodes a decrypted PGP/MIME content part (a Content-Type
 // header line, a blank line, and a body — either a single text part or a
-// multipart/mixed structure exactly like mailmsg.Message.Build() produces)
-// into a display body and any attachments. Third-party PGP/MIME senders
-// whose inner structure differs (e.g. nested multipart/alternative) degrade
-// gracefully: recognized text/attachment parts are extracted, anything else
-// is skipped rather than erroring, so the message still renders.
+// multipart structure) into a display body and any attachments. It recurses
+// into nested multipart parts, so both KyPost's own protected-headers wrapper
+// and third-party senders whose inner structure differs (e.g. Thunderbird's
+// nested multipart/alternative) render correctly. text/rfc822-headers parts
+// (the protected-headers legacy-display part) are skipped. Anything
+// unrecognized degrades gracefully to an attachment rather than erroring, so
+// the message still renders.
 func ParseContent(content []byte) (body string, attachments []mailmsg.Attachment, err error) {
 	if int64(len(content)) > mailmsg.MaxInboundMessageBytes {
 		return "", nil, mailmsg.ErrMessageTooLarge
@@ -366,21 +462,44 @@ func ParseContent(content []byte) (body string, attachments []mailmsg.Attachment
 		return string(rest), nil, nil
 	}
 
-	mr := multipart.NewReader(bytes.NewReader(rest), params["boundary"])
+	err = parseMultipart(bytes.NewReader(rest), params["boundary"], 0, &body, &attachments)
+	return body, attachments, err
+}
+
+// parseMultipart walks the parts of a multipart body, recursing into nested
+// multipart parts up to maxContentDepth. The first text/plain, text/html or
+// untyped part found (in document order, across nesting) wins as the display
+// body; other recognized parts become attachments; text/rfc822-headers parts
+// are skipped.
+func parseMultipart(r io.Reader, boundary string, depth int, body *string, attachments *[]mailmsg.Attachment) error {
+	if depth >= maxContentDepth {
+		return nil
+	}
+	mr := multipart.NewReader(r, boundary)
 	for {
 		part, err := mr.NextPart()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return body, attachments, fmt.Errorf("pgpmail: read multipart part: %w", err)
+			return fmt.Errorf("pgpmail: read multipart part: %w", err)
 		}
+
+		partType := part.Header.Get("Content-Type")
+		if mediaType, params, mtErr := mime.ParseMediaType(partType); mtErr == nil &&
+			strings.HasPrefix(mediaType, "multipart/") && params["boundary"] != "" {
+			if err := parseMultipart(part, params["boundary"], depth+1, body, attachments); err != nil {
+				return err
+			}
+			continue
+		}
+
 		partBody, err := mailmsg.BoundedRead(part, mailmsg.MaxInboundMessageBytes)
 		if err != nil {
 			if errors.Is(err, mailmsg.ErrMessageTooLarge) {
-				return body, attachments, err
+				return err
 			}
-			return body, attachments, fmt.Errorf("pgpmail: read part body: %w", err)
+			return fmt.Errorf("pgpmail: read part body: %w", err)
 		}
 		if strings.EqualFold(part.Header.Get("Content-Transfer-Encoding"), "base64") {
 			if decoded, decErr := base64.StdEncoding.DecodeString(string(partBody)); decErr == nil {
@@ -388,20 +507,33 @@ func ParseContent(content []byte) (body string, attachments []mailmsg.Attachment
 			}
 		}
 
-		partType := part.Header.Get("Content-Type")
-		if body == "" && (strings.HasPrefix(partType, "text/plain") || strings.HasPrefix(partType, "text/html") || partType == "") {
-			body = string(partBody)
+		// The protected-headers legacy-display part carries only a human-
+		// readable Subject line for non-aware clients; never show it as body
+		// or attachment.
+		if strings.HasPrefix(partType, "text/rfc822-headers") {
 			continue
 		}
-		name := part.FileName()
+		// A text part without a filename is a body candidate (or, in a
+		// multipart/alternative, an alternative rendering of one): the first
+		// wins as the display body and the rest are dropped rather than
+		// misfiled as attachments. A text part *with* a filename is a genuine
+		// text attachment (e.g. note.txt) and falls through below.
+		filename := part.FileName()
+		if filename == "" && (strings.HasPrefix(partType, "text/plain") || strings.HasPrefix(partType, "text/html") || partType == "") {
+			if *body == "" {
+				*body = string(partBody)
+			}
+			continue
+		}
+		name := filename
 		if name == "" {
 			name = "attachment"
 		}
-		attachments = append(attachments, mailmsg.Attachment{
+		*attachments = append(*attachments, mailmsg.Attachment{
 			Name:     name,
 			MimeType: partType,
 			Content:  partBody,
 		})
 	}
-	return body, attachments, nil
+	return nil
 }

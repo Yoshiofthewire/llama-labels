@@ -112,6 +112,9 @@ func TestDecryptPGPMessageContentRoundTrip(t *testing.T) {
 	if result.Body != "meet at dawn" {
 		t.Fatalf("body mismatch: got %q", result.Body)
 	}
+	if result.PGPProtectedSubject != "Secret" {
+		t.Fatalf("expected the real subject restored from protected headers, got %q", result.PGPProtectedSubject)
+	}
 	if !result.PGPVerified {
 		t.Fatal("expected signature to verify against the known contact key")
 	}
