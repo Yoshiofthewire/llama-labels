@@ -229,10 +229,16 @@ func runAll(d runDeps) error {
 	}()
 
 	<-stop
-	// Cancel the sweepers right away, then drain the HTTP server before
-	// stopping the poller: an in-flight admin request (e.g. "poll now") may
-	// still depend on the poller, so it should keep running until Shutdown
-	// has finished waiting for such requests to complete.
+	// Cancel the sweepers right away. Draining the HTTP server before
+	// stopping the poller is an arbitrary-but-reasonable convention, not a
+	// correctness requirement: poller.Stop() only cancels the background
+	// ticker loop in Poller.Run (via p.cancel), which an in-flight admin
+	// "poll now" request never observes — TriggerNow's tick() (and the
+	// tickUser/handleMessage calls it makes) derive their own fresh
+	// context.Background()-based contexts, not p.cancel. So poller.Stop()
+	// is non-blocking and fire-and-forget, and its position relative to
+	// Shutdown doesn't affect correctness; this order is just kept for
+	// readability (network-facing shutdown first, background work last).
 	cancelSweepers()
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancelShutdown()
