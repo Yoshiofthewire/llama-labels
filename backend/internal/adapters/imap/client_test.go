@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -98,6 +99,95 @@ func TestEmailContentSize(t *testing.T) {
 		e := &goimap.Email{HTML: strings.Repeat("a", 16)}
 		if size := emailContentSize(e); size > mailmsg.MaxInboundMessageBytes {
 			t.Fatalf("expected size %d not to exceed cap %d", size, mailmsg.MaxInboundMessageBytes)
+		}
+	})
+}
+
+// TestPartitionUIDsBySize exercises the pure split ListUnreadInbox uses to
+// decide which UIDs are safe to pass to go-imap's GetEmails (which fully
+// buffers each message's body/attachments into memory) versus which were
+// already identified as oversized by the server-side "UNSEEN LARGER <cap>"
+// SEARCH and so must never reach GetEmails at all.
+//
+// This is the seam that proves the expensive fetch is genuinely skipped for
+// an oversized UID — not just checked-and-discarded afterwards: toFetch is
+// the exact, and only, slice ListUnreadInbox passes to GetEmails, so any UID
+// this function places in tooLarge instead structurally cannot appear in
+// that call. ListUnreadInbox itself can't be driven end-to-end in this
+// package's tests without a live/fake *goimap.Dialer (see TestEmailContentSize
+// above), so partitionUIDsBySize is deliberately factored out as ordinary,
+// connection-free logic to make that guarantee directly testable.
+func TestPartitionUIDsBySize(t *testing.T) {
+	t.Run("oversized UIDs are excluded from toFetch and routed to tooLarge", func(t *testing.T) {
+		filtered := []int{1, 2, 3, 4, 5}
+		oversized := []int{2, 4}
+
+		toFetch, tooLarge := partitionUIDsBySize(filtered, oversized)
+
+		wantFetch := []int{1, 3, 5}
+		wantLarge := []int{2, 4}
+		if !reflect.DeepEqual(toFetch, wantFetch) {
+			t.Fatalf("toFetch = %v, want %v", toFetch, wantFetch)
+		}
+		if !reflect.DeepEqual(tooLarge, wantLarge) {
+			t.Fatalf("tooLarge = %v, want %v", tooLarge, wantLarge)
+		}
+		// The defining property: no UID present in tooLarge may also be
+		// present in toFetch — that would mean an oversized message's body
+		// still gets fetched.
+		large := make(map[int]bool, len(tooLarge))
+		for _, uid := range tooLarge {
+			large[uid] = true
+		}
+		for _, uid := range toFetch {
+			if large[uid] {
+				t.Fatalf("uid %d present in both toFetch and tooLarge", uid)
+			}
+		}
+	})
+
+	t.Run("no oversized UIDs: everything goes to toFetch", func(t *testing.T) {
+		filtered := []int{10, 20, 30}
+		toFetch, tooLarge := partitionUIDsBySize(filtered, nil)
+		if !reflect.DeepEqual(toFetch, filtered) {
+			t.Fatalf("toFetch = %v, want %v", toFetch, filtered)
+		}
+		if len(tooLarge) != 0 {
+			t.Fatalf("expected no oversized UIDs, got %v", tooLarge)
+		}
+	})
+
+	t.Run("all UIDs oversized: toFetch is empty", func(t *testing.T) {
+		filtered := []int{7, 8}
+		toFetch, tooLarge := partitionUIDsBySize(filtered, []int{7, 8})
+		if len(toFetch) != 0 {
+			t.Fatalf("expected empty toFetch, got %v", toFetch)
+		}
+		if !reflect.DeepEqual(tooLarge, filtered) {
+			t.Fatalf("tooLarge = %v, want %v", tooLarge, filtered)
+		}
+	})
+
+	t.Run("oversized UID outside this batch is ignored, not fabricated", func(t *testing.T) {
+		// The LARGER search is scoped by UNSEEN but not by the checkpoint
+		// filter, so it can report a UID that raced out of this batch
+		// between the two round trips (e.g. no longer unseen). It must not
+		// show up in either output slice.
+		filtered := []int{1, 2}
+		oversized := []int{2, 99}
+		toFetch, tooLarge := partitionUIDsBySize(filtered, oversized)
+		if !reflect.DeepEqual(toFetch, []int{1}) {
+			t.Fatalf("toFetch = %v, want [1]", toFetch)
+		}
+		if !reflect.DeepEqual(tooLarge, []int{2}) {
+			t.Fatalf("tooLarge = %v, want [2]", tooLarge)
+		}
+	})
+
+	t.Run("empty filtered returns empty slices regardless of oversized input", func(t *testing.T) {
+		toFetch, tooLarge := partitionUIDsBySize(nil, []int{1, 2, 3})
+		if len(toFetch) != 0 || len(tooLarge) != 0 {
+			t.Fatalf("expected both empty, got toFetch=%v tooLarge=%v", toFetch, tooLarge)
 		}
 	})
 }
