@@ -2,12 +2,14 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -188,14 +190,75 @@ func runAll(d runDeps) error {
 // wipe out MFA that users re-enroll on every subsequent restart.
 const mfaClearAllMarkerFile = "mfa-clear-all.done"
 
+// mfaClearAllProgressFile persists, per user ID, which users MFA_CLEAR_ALL has
+// already successfully cleared during an in-progress break-glass campaign —
+// one that has not yet fully succeeded and written mfaClearAllMarkerFile.
+//
+// Without this, a boot that clears users A and B but fails on C would have no
+// marker at all (since the campaign as a whole didn't finish), so the next
+// boot would rerun the ENTIRE user list, including A and B. If either of them
+// re-enrolled MFA in the meantime (exactly what the break-glass procedure
+// expects an admin to do), that retry would silently wipe it out again — and
+// forever, if C's failure is permanent. Tracking per-user completion means a
+// retry only ever touches users still outstanding: once a user is recorded
+// here, no later boot (with the env var still set) will clear their MFA again,
+// even if they've since re-enrolled.
+const mfaClearAllProgressFile = "mfa-clear-all.progress"
+
+// mfaClearAllProgress is the on-disk schema for mfaClearAllProgressFile.
+type mfaClearAllProgress struct {
+	Cleared []string `json:"cleared"`
+}
+
+// loadMFAClearAllCleared reads the set of user IDs already successfully
+// cleared by a previous boot's MFA_CLEAR_ALL pass. A missing file (no prior
+// partial attempt) is not an error and yields an empty set.
+func loadMFAClearAllCleared(path string) (map[string]struct{}, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]struct{}{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var progress mfaClearAllProgress
+	if err := json.Unmarshal(data, &progress); err != nil {
+		return nil, err
+	}
+	cleared := make(map[string]struct{}, len(progress.Cleared))
+	for _, id := range progress.Cleared {
+		cleared[id] = struct{}{}
+	}
+	return cleared, nil
+}
+
+// saveMFAClearAllCleared atomically persists the set of user IDs cleared so
+// far, so a subsequent boot (should this one fail partway) knows which users
+// are already done and must not be touched again.
+func saveMFAClearAllCleared(path string, cleared map[string]struct{}) error {
+	ids := make([]string, 0, len(cleared))
+	for id := range cleared {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	data, err := json.Marshal(mfaClearAllProgress{Cleared: ids})
+	if err != nil {
+		return err
+	}
+	return fsutil.AtomicWriteFile(path, data, 0o600)
+}
+
 // clearAllMFAIfRequested is a break-glass recovery path for self-hosters
 // locked out by MFA with no other admin able to reach the Manage Users page.
 // Setting MFA_CLEAR_ALL wipes TOTP/recovery codes/push-MFA for every user,
 // but only once: a successful clear writes a marker file in stateDir that
 // permanently disarms this path, so an operator who forgets to unset the env
-// var afterward does not keep re-clearing MFA on every future boot. If the
-// clear fails partway (any single user's write errors), the marker is
-// deliberately not written so the operator's next boot retries it.
+// var afterward does not keep re-clearing MFA on every future boot.
+//
+// If the clear fails partway (any single user's write errors), the marker is
+// deliberately not written so the operator's next boot retries it — but the
+// retry only reprocesses users not yet recorded in mfaClearAllProgressFile, so
+// users already cleared (and possibly re-enrolled since) are left alone.
 func clearAllMFAIfRequested(logger *logging.Logger, usersStore *users.Store, stateDir string) {
 	if raw := strings.TrimSpace(os.Getenv("MFA_CLEAR_ALL")); raw == "" {
 		return
@@ -211,14 +274,30 @@ func clearAllMFAIfRequested(logger *logging.Logger, usersStore *users.Store, sta
 		return
 	}
 
+	progressPath := filepath.Join(stateDir, mfaClearAllProgressFile)
+	cleared, err := loadMFAClearAllCleared(progressPath)
+	if err != nil {
+		logger.Error("MFA_CLEAR_ALL: failed to read per-user clear progress; skipping clear this boot to avoid re-clearing already-handled users", "error", err.Error())
+		return
+	}
+
 	all, err := usersStore.List()
 	if err != nil {
 		logger.Error("MFA_CLEAR_ALL: failed to list users", "error", err.Error())
 		return
 	}
-	cleared := 0
+
+	clearedThisBoot := 0
 	failed := false
 	for _, u := range all {
+		if _, alreadyCleared := cleared[u.ID]; alreadyCleared {
+			// Already successfully cleared by a previous boot of this
+			// campaign. Skip unconditionally — even if they now show
+			// TOTPEnabled/PushMFAEnabled again because they re-enrolled —
+			// so an unrelated user's outstanding failure elsewhere doesn't
+			// cause a retry to wipe out their fresh MFA a second time.
+			continue
+		}
 		if !u.TOTPEnabled && !u.PushMFAEnabled {
 			continue
 		}
@@ -227,14 +306,25 @@ func clearAllMFAIfRequested(logger *logging.Logger, usersStore *users.Store, sta
 			failed = true
 			continue
 		}
-		cleared++
+		cleared[u.ID] = struct{}{}
+		clearedThisBoot++
 	}
-	logger.Error("MFA_CLEAR_ALL is set: cleared two-factor auth for all users", "users_cleared", strconv.Itoa(cleared))
+
+	if err := saveMFAClearAllCleared(progressPath, cleared); err != nil {
+		// The clears that already happened are real and won't be undone,
+		// but without a persisted record of them a later boot can't tell
+		// they're done, so force a retry path rather than risk declaring
+		// this campaign complete based on an unpersisted set.
+		logger.Error("MFA_CLEAR_ALL: failed to persist per-user clear progress; will retry on next boot", "error", err.Error())
+		failed = true
+	}
 
 	if failed {
-		logger.Error("MFA_CLEAR_ALL: one or more users failed to clear; completion marker not written, will retry on next boot")
+		logger.Error("MFA_CLEAR_ALL: cleared two-factor auth for some users this boot, but at least one user failed or progress could not be saved; outstanding users will be retried on next boot", "users_cleared_this_boot", strconv.Itoa(clearedThisBoot))
 		return
 	}
+
+	logger.Error("MFA_CLEAR_ALL is set: cleared two-factor auth for all users", "users_cleared_this_boot", strconv.Itoa(clearedThisBoot))
 
 	if err := fsutil.AtomicWriteFile(markerPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600); err != nil {
 		logger.Error("MFA_CLEAR_ALL: failed to write completion marker; will retry clearing MFA on next boot", "error", err.Error())

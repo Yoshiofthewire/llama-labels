@@ -168,3 +168,108 @@ func TestClearAllMFAIfRequested_PartialFailureDoesNotWriteMarker(t *testing.T) {
 		t.Fatalf("unexpected error checking marker file: %v", err)
 	}
 }
+
+// TestClearAllMFAIfRequested_AlreadyClearedUserNotReclearedOnRetry proves
+// scenario (a) from the review finding: if a previous boot cleared user A but
+// the overall campaign didn't complete (some other user, here B, was still
+// outstanding, so no marker was written), a retry boot must not re-touch A —
+// even without a marker file existing — while still finishing off B. This is
+// the whole-loop-failure bug: before this fix, a retry reran every user
+// (marker absent), so a user who re-enrolled between boots would get wiped
+// out again by the retry meant only for the still-failing user.
+func TestClearAllMFAIfRequested_AlreadyClearedUserNotReclearedOnRetry(t *testing.T) {
+	t.Setenv("MFA_CLEAR_ALL", "true")
+
+	stateDir := t.TempDir()
+	logger := newTestLogger(t)
+	store := newTestUsersStore(t)
+
+	admin, err := store.FirstAdmin()
+	if err != nil {
+		t.Fatalf("FirstAdmin: %v", err)
+	}
+	other, err := store.Create("second-admin", "hunter22-hunter22", users.RoleAdmin)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Simulate a prior boot (boot N) that successfully cleared admin but
+	// never got to (or failed on) other, so the campaign never completed:
+	// no marker file, but admin is recorded as already-cleared progress.
+	progressPath := filepath.Join(stateDir, mfaClearAllProgressFile)
+	if err := saveMFAClearAllCleared(progressPath, map[string]struct{}{admin.ID: {}}); err != nil {
+		t.Fatalf("seed progress file: %v", err)
+	}
+
+	// admin re-enrolls in MFA after boot N's partial clear, exactly as the
+	// break-glass procedure intends. other still has MFA enabled and was
+	// never cleared by boot N.
+	enableTOTPForTest(t, store, admin.ID)
+	enableTOTPForTest(t, store, other.ID)
+
+	// Boot N+1: env var still set, no marker file, progress file says admin
+	// is already done.
+	clearAllMFAIfRequested(logger, store, stateDir)
+
+	gotAdmin, err := store.Get(admin.ID)
+	if err != nil {
+		t.Fatalf("Get(admin): %v", err)
+	}
+	if !gotAdmin.TOTPEnabled {
+		t.Fatalf("expected admin's freshly re-enrolled TOTP to survive the retry (already recorded as cleared), got cleared again")
+	}
+
+	gotOther, err := store.Get(other.ID)
+	if err != nil {
+		t.Fatalf("Get(other): %v", err)
+	}
+	if gotOther.TOTPEnabled {
+		t.Fatalf("expected other (never previously cleared) to be cleared by the retry boot, got still enabled")
+	}
+
+	// Since this boot's loop had no failures (other, the only outstanding
+	// user, cleared successfully), the campaign completes and the marker
+	// gets written.
+	markerPath := filepath.Join(stateDir, mfaClearAllMarkerFile)
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("expected marker file to exist once the retry boot finishes with no outstanding failures: %v", err)
+	}
+}
+
+// TestClearAllMFAIfRequested_ReenrollmentSurvivesSubsequentBootWithEnvVarSet
+// proves scenario (b): a user who re-enrolls TOTP after a partial-failure
+// boot (recorded as already-cleared progress, no completion marker yet) keeps
+// that re-enrolled MFA intact through a later boot, even with MFA_CLEAR_ALL
+// still set in the environment.
+func TestClearAllMFAIfRequested_ReenrollmentSurvivesSubsequentBootWithEnvVarSet(t *testing.T) {
+	t.Setenv("MFA_CLEAR_ALL", "true")
+
+	stateDir := t.TempDir()
+	logger := newTestLogger(t)
+	store := newTestUsersStore(t)
+
+	admin, err := store.FirstAdmin()
+	if err != nil {
+		t.Fatalf("FirstAdmin: %v", err)
+	}
+
+	// admin was already cleared by an earlier (partially-failed, marker-less)
+	// boot of the campaign.
+	progressPath := filepath.Join(stateDir, mfaClearAllProgressFile)
+	if err := saveMFAClearAllCleared(progressPath, map[string]struct{}{admin.ID: {}}); err != nil {
+		t.Fatalf("seed progress file: %v", err)
+	}
+
+	// admin re-enrolls in MFA as the break-glass procedure intends.
+	enableTOTPForTest(t, store, admin.ID)
+
+	clearAllMFAIfRequested(logger, store, stateDir)
+
+	got, err := store.Get(admin.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.TOTPEnabled {
+		t.Fatalf("expected re-enrolled TOTP to remain intact after a subsequent boot with MFA_CLEAR_ALL still set, got cleared")
+	}
+}
