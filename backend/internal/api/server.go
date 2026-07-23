@@ -3522,6 +3522,22 @@ func (s *Server) handleMFATOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-account replay guard: a password-holding attacker can mint any
+	// number of challenges, so single-use protection on the challenge alone
+	// (above) is not enough — it would let one captured valid code be
+	// replayed once per freshly minted challenge. SetLastUsedTOTPStep
+	// atomically rejects any step that is not strictly newer than the last
+	// one accepted for this account, persisted across challenges. It runs
+	// only after every other check has passed (a wrong/rejected code never
+	// reaches here, so it never advances the recorded step), and a rejection
+	// here gets the exact same generic response as a wrong code so it cannot
+	// be distinguished from one over the wire.
+	if _, err := s.users.SetLastUsedTOTPStep(u.ID, step); err != nil {
+		s.mfaChallenges.Delete(ch.ID)
+		http.Error(w, "invalid code", http.StatusUnauthorized)
+		return
+	}
+
 	s.mfaChallenges.Delete(ch.ID)
 	if err := s.startSession(w, r, u.ID); err != nil {
 		http.Error(w, "session creation failed", http.StatusInternalServerError)

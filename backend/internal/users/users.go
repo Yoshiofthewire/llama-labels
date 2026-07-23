@@ -49,6 +49,17 @@ type User struct {
 	TOTPSecretEnc     string   `json:"totpSecretEnc,omitempty"`
 	TOTPConfirmedAt   string   `json:"totpConfirmedAt,omitempty"`
 	RecoveryCodesHash []string `json:"recoveryCodesHash,omitempty"`
+	// LastUsedTOTPStep is the RFC 6238 time-step (Unix seconds / 30) of the
+	// most recently accepted TOTP code for this account, tracked across every
+	// login challenge (not just the ephemeral, per-challenge replay guard in
+	// mfa.Store.ConsumeTOTPStep). TOTP steps strictly increase over time, so
+	// rejecting any code whose step is <= this value blocks replay of a
+	// captured valid code against a freshly minted challenge, without
+	// affecting legitimate retry-after-typo attempts at the current step (a
+	// rejected code never advances this field — see handleMFATOTP). The zero
+	// value (no code ever accepted yet) never rejects anything, since real
+	// TOTP steps are large positive integers (currently around 1.7e9).
+	LastUsedTOTPStep int64 `json:"lastUsedTotpStep,omitempty"`
 	// PushMFAEnabled is reserved for a later push-2FA milestone; nothing in
 	// Milestone 1 sets or reads it.
 	PushMFAEnabled bool `json:"pushMfaEnabled,omitempty"`
@@ -532,6 +543,32 @@ func (s *Store) DisableTOTP(id string) (User, error) {
 func (s *Store) SetPushMFAEnabled(id string, enabled bool) (User, error) {
 	return s.mutate(id, func(u *User) error {
 		u.PushMFAEnabled = enabled
+		return nil
+	})
+}
+
+// ErrTOTPStepNotNewer is returned by SetLastUsedTOTPStep when step is not
+// strictly greater than the account's currently recorded LastUsedTOTPStep —
+// i.e. the caller is attempting to record a replayed or out-of-order code.
+var ErrTOTPStepNotNewer = errors.New("totp step is not newer than last recorded step")
+
+// SetLastUsedTOTPStep atomically checks-and-records the RFC 6238 time-step of
+// an accepted TOTP code for replay protection scoped to the account (rather
+// than a single ephemeral challenge — see mfa.Store.ConsumeTOTPStep for that
+// narrower guard). It only writes, and only reports success, when step is
+// strictly greater than the currently stored value; otherwise it returns
+// ErrTOTPStepNotNewer without writing (mirroring ConsumeRecoveryCode's
+// no-match-means-no-write behavior). Doing the check and the write inside the
+// same mutate lock (rather than a separate Get + later write) closes a TOCTOU
+// window where two concurrent requests bearing the same captured valid code —
+// each against its own freshly minted challenge — could otherwise both pass a
+// stale "not yet recorded" check before either request recorded it.
+func (s *Store) SetLastUsedTOTPStep(id string, step int64) (User, error) {
+	return s.mutate(id, func(u *User) error {
+		if step <= u.LastUsedTOTPStep {
+			return ErrTOTPStepNotNewer
+		}
+		u.LastUsedTOTPStep = step
 		return nil
 	})
 }

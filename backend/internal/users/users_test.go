@@ -1,6 +1,7 @@
 package users
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -199,6 +200,57 @@ func TestEnableTOTPRequiresPendingSecret(t *testing.T) {
 	}
 	if _, err := store.EnableTOTP(u.ID, "2026-07-09T00:00:00Z", nil); err == nil {
 		t.Fatalf("expected EnableTOTP without pending secret to error")
+	}
+}
+
+func TestSetLastUsedTOTPStep(t *testing.T) {
+	dir := t.TempDir()
+	store, err := LoadOrMigrate(dir, filepath.Join(dir, "admin.env"))
+	if err != nil {
+		t.Fatalf("LoadOrMigrate: %v", err)
+	}
+	u, err := store.Create("judy", "pw-judy", RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if u.LastUsedTOTPStep != 0 {
+		t.Fatalf("expected zero-value LastUsedTOTPStep on a new user, got %d", u.LastUsedTOTPStep)
+	}
+
+	// First recording always succeeds (zero value never blocks).
+	got, err := store.SetLastUsedTOTPStep(u.ID, 100)
+	if err != nil {
+		t.Fatalf("SetLastUsedTOTPStep(100): %v", err)
+	}
+	if got.LastUsedTOTPStep != 100 {
+		t.Fatalf("LastUsedTOTPStep = %d, want 100", got.LastUsedTOTPStep)
+	}
+
+	// Replaying the exact same step is rejected and does not write.
+	if _, err := store.SetLastUsedTOTPStep(u.ID, 100); !errors.Is(err, ErrTOTPStepNotNewer) {
+		t.Fatalf("SetLastUsedTOTPStep(100) again = %v, want ErrTOTPStepNotNewer", err)
+	}
+	got, _ = store.Get(u.ID)
+	if got.LastUsedTOTPStep != 100 {
+		t.Fatalf("LastUsedTOTPStep after rejected replay = %d, want unchanged 100", got.LastUsedTOTPStep)
+	}
+
+	// An older step is also rejected.
+	if _, err := store.SetLastUsedTOTPStep(u.ID, 99); !errors.Is(err, ErrTOTPStepNotNewer) {
+		t.Fatalf("SetLastUsedTOTPStep(99) = %v, want ErrTOTPStepNotNewer", err)
+	}
+	got, _ = store.Get(u.ID)
+	if got.LastUsedTOTPStep != 100 {
+		t.Fatalf("LastUsedTOTPStep after rejected older step = %d, want unchanged 100", got.LastUsedTOTPStep)
+	}
+
+	// A genuinely later step succeeds and advances the recorded value.
+	got, err = store.SetLastUsedTOTPStep(u.ID, 101)
+	if err != nil {
+		t.Fatalf("SetLastUsedTOTPStep(101): %v", err)
+	}
+	if got.LastUsedTOTPStep != 101 {
+		t.Fatalf("LastUsedTOTPStep = %d, want 101", got.LastUsedTOTPStep)
 	}
 }
 

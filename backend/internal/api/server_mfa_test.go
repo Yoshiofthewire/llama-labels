@@ -159,6 +159,125 @@ func TestTOTPEnrollmentAndLoginFlow(t *testing.T) {
 	}
 }
 
+// TestTOTPPerAccountReplayGuard proves replay protection is scoped to the
+// account, not just a single challenge: a captured valid code cannot be
+// replayed against a freshly minted challenge, a genuinely later code still
+// works normally, and a wrong code never advances the recorded step (so the
+// user can still retry the current step correctly).
+func TestTOTPPerAccountReplayGuard(t *testing.T) {
+	srv := newTestServer(t)
+	u, err := srv.users.Create("ivy", "pw-ivy", users.RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	secret, _ := enrollTOTP(t, srv, u.ID)
+
+	newChallenge := func() string {
+		t.Helper()
+		loginRec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
+			map[string]string{"username": "ivy", "password": "pw-ivy"})
+		var login struct {
+			ChallengeID string `json:"challengeId"`
+		}
+		if err := json.Unmarshal(loginRec.Body.Bytes(), &login); err != nil {
+			t.Fatalf("unmarshal login: %v", err)
+		}
+		if login.ChallengeID == "" {
+			t.Fatalf("expected a challengeId, got %s", loginRec.Body.String())
+		}
+		return login.ChallengeID
+	}
+
+	// (a) A valid TOTP code works once.
+	firstCode := totpCodeForTest(t, secret, time.Now())
+	ch1 := newChallenge()
+	rec1 := doJSON(srv, srv.handleMFATOTP, http.MethodPost, "/api/auth/mfa/totp",
+		map[string]string{"challengeId": ch1, "code": firstCode})
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("(a) first use: status=%d body=%s", rec1.Code, rec1.Body.String())
+	}
+
+	// (b) Replaying that SAME code (same step) is rejected even against a
+	// brand-new challenge — this is the per-account guard; the per-challenge
+	// guard alone would let it through since ch2 never saw this code before.
+	ch2 := newChallenge()
+	rec2 := doJSON(srv, srv.handleMFATOTP, http.MethodPost, "/api/auth/mfa/totp",
+		map[string]string{"challengeId": ch2, "code": firstCode})
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("(b) cross-challenge replay: status=%d, want 401", rec2.Code)
+	}
+	// The rejection must be indistinguishable from a wrong code: same status,
+	// same body. Uses a fresh challenge since ch2 was consumed by rec2 above
+	// (a rejected code, replay or otherwise, always burns the challenge it
+	// was submitted against).
+	wrongRec := doJSON(srv, srv.handleMFATOTP, http.MethodPost, "/api/auth/mfa/totp",
+		map[string]string{"challengeId": newChallenge(), "code": "000000"})
+	if wrongRec.Code != rec2.Code || wrongRec.Body.String() != rec2.Body.String() {
+		t.Fatalf("replay response (%d %q) distinguishable from wrong-code response (%d %q)",
+			rec2.Code, rec2.Body.String(), wrongRec.Code, wrongRec.Body.String())
+	}
+
+	// (c) A legitimately later code (later time-step) still works normally.
+	laterCode := totpCodeForTest(t, secret, time.Now().Add(30*time.Second))
+	ch3 := newChallenge()
+	rec3 := doJSON(srv, srv.handleMFATOTP, http.MethodPost, "/api/auth/mfa/totp",
+		map[string]string{"challengeId": ch3, "code": laterCode})
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("(c) later code: status=%d body=%s", rec3.Code, rec3.Body.String())
+	}
+
+	// (d) A wrong/invalid code does NOT advance the recorded step — proven on
+	// a second, independent account so there is no ceiling on how far a
+	// following genuine code can legitimately advance (ivy's recorded step
+	// above is already pinned near the edge of the ±1 skew window accepted
+	// by totp.Validate, since (c) deliberately used a next-step code).
+	v, err := srv.users.Create("jill", "pw-jill", users.RoleUser)
+	if err != nil {
+		t.Fatalf("Create jill: %v", err)
+	}
+	jillSecret, _ := enrollTOTP(t, srv, v.ID)
+	newJillChallenge := func() string {
+		t.Helper()
+		loginRec := doJSON(srv, srv.handleLogin, http.MethodPost, "/api/auth/login",
+			map[string]string{"username": "jill", "password": "pw-jill"})
+		var login struct {
+			ChallengeID string `json:"challengeId"`
+		}
+		if err := json.Unmarshal(loginRec.Body.Bytes(), &login); err != nil {
+			t.Fatalf("unmarshal login: %v", err)
+		}
+		return login.ChallengeID
+	}
+
+	before, _ := srv.users.Get(v.ID)
+	if before.LastUsedTOTPStep != 0 {
+		t.Fatalf("expected fresh account to have LastUsedTOTPStep=0, got %d", before.LastUsedTOTPStep)
+	}
+	badRec := doJSON(srv, srv.handleMFATOTP, http.MethodPost, "/api/auth/mfa/totp",
+		map[string]string{"challengeId": newJillChallenge(), "code": "111111"})
+	if badRec.Code != http.StatusUnauthorized {
+		t.Fatalf("(d) wrong code: status=%d, want 401", badRec.Code)
+	}
+	afterWrong, _ := srv.users.Get(v.ID)
+	if afterWrong.LastUsedTOTPStep != 0 {
+		t.Fatalf("wrong code advanced LastUsedTOTPStep: want 0, got %d", afterWrong.LastUsedTOTPStep)
+	}
+
+	// The user's next attempt at the (still-unused) current step succeeds,
+	// proving the wrong attempt above did not poison the account's state.
+	realCode := totpCodeForTest(t, jillSecret, time.Now())
+	rec5 := doJSON(srv, srv.handleMFATOTP, http.MethodPost, "/api/auth/mfa/totp",
+		map[string]string{"challengeId": newJillChallenge(), "code": realCode})
+	if rec5.Code != http.StatusOK {
+		t.Fatalf("post-wrong-attempt genuine code: status=%d body=%s", rec5.Code, rec5.Body.String())
+	}
+	afterGenuine, _ := srv.users.Get(v.ID)
+	if afterGenuine.LastUsedTOTPStep <= afterWrong.LastUsedTOTPStep {
+		t.Fatalf("expected LastUsedTOTPStep to advance past %d, got %d",
+			afterWrong.LastUsedTOTPStep, afterGenuine.LastUsedTOTPStep)
+	}
+}
+
 func TestTOTPAttemptLockout(t *testing.T) {
 	srv := newTestServer(t)
 	u, err := srv.users.Create("frank", "pw-frank", users.RoleUser)
