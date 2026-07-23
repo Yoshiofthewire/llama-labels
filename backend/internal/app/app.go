@@ -16,6 +16,7 @@ import (
 	"kypost-server/backend/internal/adapters/classifier"
 	"kypost-server/backend/internal/api"
 	"kypost-server/backend/internal/config"
+	"kypost-server/backend/internal/fsutil"
 	"kypost-server/backend/internal/health"
 	"kypost-server/backend/internal/logging"
 	"kypost-server/backend/internal/processor"
@@ -82,7 +83,7 @@ func Run(args []string) error {
 		logger.Error("legacy single-user data migration failed", "error", err.Error())
 	}
 
-	clearAllMFAIfRequested(logger, usersStore)
+	clearAllMFAIfRequested(logger, usersStore, paths.StateDir)
 
 	healthSvc := health.NewService()
 	healthSvc.MarkHealthy()
@@ -181,35 +182,65 @@ func runAll(d runDeps) error {
 	return nil
 }
 
+// mfaClearAllMarkerFile is the break-glass one-shot marker: once MFA_CLEAR_ALL
+// has successfully cleared every user's MFA, this file's presence in stateDir
+// self-disarms the env var so leaving it set after the fact doesn't silently
+// wipe out MFA that users re-enroll on every subsequent restart.
+const mfaClearAllMarkerFile = "mfa-clear-all.done"
+
 // clearAllMFAIfRequested is a break-glass recovery path for self-hosters
 // locked out by MFA with no other admin able to reach the Manage Users page.
-// Setting MFA_CLEAR_ALL wipes TOTP/recovery codes/push-MFA for every user on
-// every boot until the operator unsets it and restarts; it is intentionally
-// not self-disabling since the process cannot safely rewrite the host .env.
-func clearAllMFAIfRequested(logger *logging.Logger, usersStore *users.Store) {
+// Setting MFA_CLEAR_ALL wipes TOTP/recovery codes/push-MFA for every user,
+// but only once: a successful clear writes a marker file in stateDir that
+// permanently disarms this path, so an operator who forgets to unset the env
+// var afterward does not keep re-clearing MFA on every future boot. If the
+// clear fails partway (any single user's write errors), the marker is
+// deliberately not written so the operator's next boot retries it.
+func clearAllMFAIfRequested(logger *logging.Logger, usersStore *users.Store, stateDir string) {
 	if raw := strings.TrimSpace(os.Getenv("MFA_CLEAR_ALL")); raw == "" {
 		return
 	} else if enabled, err := strconv.ParseBool(raw); err != nil || !enabled {
 		return
 	}
+
+	markerPath := filepath.Join(stateDir, mfaClearAllMarkerFile)
+	if _, err := os.Stat(markerPath); err == nil {
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		logger.Error("MFA_CLEAR_ALL: failed to check completion marker; skipping clear this boot", "error", err.Error())
+		return
+	}
+
 	all, err := usersStore.List()
 	if err != nil {
 		logger.Error("MFA_CLEAR_ALL: failed to list users", "error", err.Error())
 		return
 	}
 	cleared := 0
+	failed := false
 	for _, u := range all {
 		if !u.TOTPEnabled && !u.PushMFAEnabled {
 			continue
 		}
 		if _, err := usersStore.DisableTOTP(u.ID); err != nil {
 			logger.Error("MFA_CLEAR_ALL: failed to clear user", "user_id", u.ID, "error", err.Error())
+			failed = true
 			continue
 		}
 		cleared++
 	}
 	logger.Error("MFA_CLEAR_ALL is set: cleared two-factor auth for all users", "users_cleared", strconv.Itoa(cleared))
-	logger.Error("MFA_CLEAR_ALL: unset this variable and restart once users have re-enrolled, or it will keep clearing MFA on every boot")
+
+	if failed {
+		logger.Error("MFA_CLEAR_ALL: one or more users failed to clear; completion marker not written, will retry on next boot")
+		return
+	}
+
+	if err := fsutil.AtomicWriteFile(markerPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600); err != nil {
+		logger.Error("MFA_CLEAR_ALL: failed to write completion marker; will retry clearing MFA on next boot", "error", err.Error())
+		return
+	}
+	logger.Error("MFA_CLEAR_ALL: cleared two-factor auth for all users and wrote a completion marker; this env var can now be left set safely, it will not clear MFA again")
 }
 
 func monitorHealth(logger *logging.Logger, healthSvc *health.Service) {
